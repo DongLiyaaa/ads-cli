@@ -13,14 +13,19 @@ This CLI exposes the same backend contract already present in the local workbenc
 
 - OAuth credential health inspection
 - profile discovery and marketplace resolution
-- portfolio listing
-- Sponsored Products ad group listing
+- portfolio listing, creation, and state editing
+- Sponsored Products ad group listing, creation, and state editing
+- Sponsored Products campaign creation
 - Sponsored Products campaign metadata listing
 - Sponsored Products campaign state editing
 - Sponsored Products campaign budget editing
+- Sponsored Products campaign placement bid adjustment interface with user-supplied percentages
 - Sponsored Products keyword listing
+- Sponsored Products keyword creation
 - Sponsored Products keyword bid editing
 - Sponsored Products keyword state editing
+- Sponsored Products product ad listing, creation, and state editing
+- Sponsored Products ASIN target listing, creation, and state editing
 - negative keyword listing, ad group/campaign negative creation, and negative state editing
 - Sponsored Products keyword, search term, and campaign placement report task creation
 - report status inspection, file download, and local report parsing
@@ -66,29 +71,64 @@ AMAZON_ADS_MARKETPLACE=US
 
 - `campaigns list --marketplace US`
   - Fetch and normalize Sponsored Products campaign metadata.
+- `campaigns create --name "T11 Manual" --targeting-type MANUAL --budget 10 --start-date 2026-07-22 --strategy MANUAL --dry-run`
+  - Build or submit one Sponsored Products campaign creation payload.
 - `campaigns set-state --campaign-id 123 --state PAUSED`
   - Update one Sponsored Products campaign state.
 - `campaigns edit-budget --campaign-id 123 --budget 5.0 --budget-type DAILY`
   - Update one Sponsored Products campaign daily budget.
+- `campaigns edit-placement-bids --campaign-id 123 --top-of-search 100 --product-pages 25 --rest-of-search 0 --dry-run`
+  - Build or submit one Sponsored Products campaign placement bid adjustment payload.
+  - Percentages are explicit user inputs only. Do not recommend, infer, or auto-calculate placement values inside this CLI.
+  - Supported placement percentage flags are `--top-of-search`, `--product-pages`, and `--rest-of-search`, each in the 0-900 range.
+  - Use `--dry-run` first to inspect the exact request payload without submitting it.
 
 ### `portfolios`
 
 - `portfolios list --marketplace US`
   - Fetch and normalize portfolio rows for the selected marketplace.
+- `portfolios create --name "T11" --budget 100 --currency-code USD --dry-run`
+  - Build or submit one portfolio creation payload.
+- `portfolios set-state --portfolio-id 123 --state ARCHIVED --dry-run`
+  - Build or submit one portfolio state update payload.
 
 ### `ad-groups`
 
 - `ad-groups list --campaign-id 123`
   - Fetch and normalize Sponsored Products ad groups.
+- `ad-groups create --campaign-id 123 --name "Exact Core" --default-bid 0.72 --dry-run`
+  - Build or submit one Sponsored Products ad group creation payload.
+- `ad-groups set-state --campaign-id 123 --ad-group-id 456 --state PAUSED --dry-run`
+  - Build or submit one Sponsored Products ad group state update payload.
 
 ### `keywords`
 
 - `keywords list --campaign-id 123 --ad-group-id 456`
   - Fetch and normalize Sponsored Products keywords.
+- `keywords add --campaign-id 123 --ad-group-id 456 --keyword-text "ai recorder" --match-type EXACT --bid 0.91 --dry-run`
+  - Build or submit one Sponsored Products keyword creation payload.
 - `keywords edit-bid --campaign-id 123 --ad-group-id 456 --keyword-id 789 --bid 0.92`
   - Update one keyword bid.
 - `keywords set-state --campaign-id 123 --ad-group-id 456 --keyword-id 789 --state PAUSED`
   - Update one keyword state without changing its bid.
+
+### `product-ads`
+
+- `product-ads list --campaign-id 123`
+  - Fetch and normalize Sponsored Products advertised product rows.
+- `product-ads add --campaign-id 123 --ad-group-id 456 --sku SKU-1 --dry-run`
+  - Build or submit one Sponsored Products advertised product payload. Use exactly one of `--sku` or `--asin`.
+- `product-ads set-state --product-ad-id 789 --state PAUSED --dry-run`
+  - Build or submit one Sponsored Products advertised product state update payload.
+
+### `targets`
+
+- `targets list --campaign-id 123`
+  - Fetch and normalize Sponsored Products targeting clauses.
+- `targets add-asin --campaign-id 123 --ad-group-id 456 --asin B000000001 --bid 0.88 --dry-run`
+  - Build or submit one ASIN product targeting payload.
+- `targets set-state --target-id 789 --state ARCHIVED --dry-run`
+  - Build or submit one targeting clause state update payload.
 
 ### `negatives`
 
@@ -140,26 +180,59 @@ cli-anything-amazon-ads-ops-workbench --json profiles resolve --marketplace US
 # inspect SP campaign metadata
 cli-anything-amazon-ads-ops-workbench --json campaigns list --marketplace US
 
+# create one SP campaign payload without submitting
+cli-anything-amazon-ads-ops-workbench --json campaigns create --name "T11 Manual" --targeting-type MANUAL --budget 10 --start-date 2026-07-22 --strategy MANUAL --dry-run
+
 # pause one campaign
 cli-anything-amazon-ads-ops-workbench --json campaigns set-state --campaign-id 123 --state PAUSED
 
 # update one campaign daily budget
 cli-anything-amazon-ads-ops-workbench --json campaigns edit-budget --campaign-id 123 --budget 5.0
 
+# inspect one campaign placement bid adjustment payload without submitting
+cli-anything-amazon-ads-ops-workbench --json campaigns edit-placement-bids --campaign-id 123 --top-of-search 100 --product-pages 25 --rest-of-search 0 --dry-run
+
 # inspect portfolios
 cli-anything-amazon-ads-ops-workbench --json portfolios list --marketplace US
+
+# create one portfolio payload without submitting
+cli-anything-amazon-ads-ops-workbench --json portfolios create --name "T11" --budget 100 --currency-code USD --dry-run
+
+# archive one portfolio payload without submitting
+cli-anything-amazon-ads-ops-workbench --json portfolios set-state --portfolio-id 123 --state ARCHIVED --dry-run
 
 # inspect ad groups
 cli-anything-amazon-ads-ops-workbench --json ad-groups list --campaign-id 123
 
+# create one ad group payload without submitting
+cli-anything-amazon-ads-ops-workbench --json ad-groups create --campaign-id 123 --name "Exact Core" --default-bid 0.72 --dry-run
+
+# pause one ad group payload without submitting
+cli-anything-amazon-ads-ops-workbench --json ad-groups set-state --campaign-id 123 --ad-group-id 456 --state PAUSED --dry-run
+
 # inspect keyword rows
 cli-anything-amazon-ads-ops-workbench --json keywords list --campaign-id 123
+
+# create one keyword payload without submitting
+cli-anything-amazon-ads-ops-workbench --json keywords add --campaign-id 123 --ad-group-id 456 --keyword-text "ai recorder" --match-type EXACT --bid 0.91 --dry-run
 
 # update one keyword bid
 cli-anything-amazon-ads-ops-workbench --json keywords edit-bid --campaign-id 123 --ad-group-id 456 --keyword-id 789 --bid 0.92
 
 # pause one keyword
 cli-anything-amazon-ads-ops-workbench --json keywords set-state --campaign-id 123 --ad-group-id 456 --keyword-id 789 --state PAUSED
+
+# create one advertised product payload without submitting
+cli-anything-amazon-ads-ops-workbench --json product-ads add --campaign-id 123 --ad-group-id 456 --sku SKU-1 --dry-run
+
+# pause one advertised product payload without submitting
+cli-anything-amazon-ads-ops-workbench --json product-ads set-state --product-ad-id 789 --state PAUSED --dry-run
+
+# create one ASIN target payload without submitting
+cli-anything-amazon-ads-ops-workbench --json targets add-asin --campaign-id 123 --ad-group-id 456 --asin B000000001 --bid 0.88 --dry-run
+
+# archive one ASIN target payload without submitting
+cli-anything-amazon-ads-ops-workbench --json targets set-state --target-id 789 --state ARCHIVED --dry-run
 
 # inspect negatives
 cli-anything-amazon-ads-ops-workbench --json negatives list --campaign-id 123 --scope both
@@ -218,7 +291,9 @@ Type `help` to see the short command list and `exit` to leave.
 - `snapshot` is the best high-level command when you want one stable response envelope.
 - `campaigns list` is the narrower command when you only need campaign rows.
 - `campaigns edit-budget` currently validates against the Amazon Ads v3 daily budget shape.
-- `portfolios list`, `ad-groups list`, `keywords list`, `negatives list`, and `reports ...` all return a stable `meta + data` envelope.
+- `campaigns edit-placement-bids` is an interface only. Agents must not infer placement percentages; pass only values supplied by the user and prefer `--dry-run` before live submission.
+- New write commands for portfolios, campaigns, ad groups, keywords, product ads, and targets support `--dry-run`; prefer dry-run before live submission.
+- `portfolios list`, `ad-groups list`, `keywords list`, `product-ads list`, `targets list`, `negatives list`, and `reports ...` all return a stable `meta + data` envelope.
 - `negatives set-state` accepts the live Amazon Ads negative keyword states, which are narrower than campaign states.
 - `reports download` defaults to `~/Downloads` unless `--output-dir` is supplied.
 - `reports parse-search-terms`, `reports parse-sp-keywords`, and `reports parse-sp-campaign-placement` are local-only commands and do not require live credentials.
