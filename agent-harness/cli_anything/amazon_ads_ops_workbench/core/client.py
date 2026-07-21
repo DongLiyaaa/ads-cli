@@ -48,6 +48,22 @@ class AmazonAdsClient:
     def list_campaigns(self, access_token: str, profile_id: str) -> list[dict[str, Any]]:
         return self._paginate_campaigns("/sp/campaigns/list", access_token, profile_id)
 
+    def create_campaign(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        body = self._wrap_campaign_payload(payload)
+        return self._send_mutation(
+            "/sp/campaigns",
+            "POST",
+            access_token,
+            profile_id,
+            body,
+            "Create campaign",
+        )
+
     def edit_campaign(
         self,
         access_token: str,
@@ -55,17 +71,14 @@ class AmazonAdsClient:
         payload: dict[str, Any],
     ) -> Any:
         body = self._wrap_campaign_payload(payload)
-        req = request.Request(
-            f"{get_region_base_url(self.env.region)}/sp/campaigns",
-            method="PUT",
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                **self._build_headers(access_token, accept_path="/sp/campaigns"),
-                "Content-Type": self._content_media_type("/sp/campaigns"),
-                "Amazon-Advertising-API-Scope": profile_id,
-            },
+        return self._send_mutation(
+            "/sp/campaigns",
+            "PUT",
+            access_token,
+            profile_id,
+            body,
+            "Edit campaign",
         )
-        return self._send_json(req, "Edit campaign")
 
     def list_portfolios(self, access_token: str, profile_id: str) -> list[dict[str, Any]]:
         req = request.Request(
@@ -87,6 +100,36 @@ class AmazonAdsClient:
             return [item for item in data if isinstance(item, dict)]
         raise RuntimeError("Portfolios list failed: payload is not an array")
 
+    def create_portfolio(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/portfolios",
+            "POST",
+            access_token,
+            profile_id,
+            self._wrap_portfolio_payload(payload),
+            "Create portfolio",
+        )
+
+    def edit_portfolio(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/portfolios",
+            "PUT",
+            access_token,
+            profile_id,
+            self._wrap_portfolio_payload(payload),
+            "Edit portfolio",
+        )
+
     def list_ad_groups(
         self,
         access_token: str,
@@ -95,6 +138,36 @@ class AmazonAdsClient:
     ) -> list[dict[str, Any]]:
         return self._post_list("/sp/adGroups/list", access_token, profile_id, payload)
 
+    def create_ad_group(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sp/adGroups",
+            "POST",
+            access_token,
+            profile_id,
+            self._wrap_ad_group_payload(payload),
+            "Create ad group",
+        )
+
+    def edit_ad_group(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sp/adGroups",
+            "PUT",
+            access_token,
+            profile_id,
+            self._wrap_ad_group_payload(payload),
+            "Edit ad group",
+        )
+
     def list_keywords(
         self,
         access_token: str,
@@ -102,6 +175,22 @@ class AmazonAdsClient:
         payload: dict[str, Any],
     ) -> list[dict[str, Any]]:
         return self._post_list("/sp/keywords/list", access_token, profile_id, payload)
+
+    def create_keyword(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        body = self._wrap_keyword_edit_payload(payload)
+        return self._send_mutation(
+            "/sp/keywords",
+            "POST",
+            access_token,
+            profile_id,
+            body,
+            "Create keyword",
+        )
 
     def edit_keyword(
         self,
@@ -129,6 +218,82 @@ class AmazonAdsClient:
         payload: dict[str, Any],
     ) -> list[dict[str, Any]]:
         return self._post_list("/sp/negativeKeywords/list", access_token, profile_id, payload)
+
+    def list_product_ads(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return self._post_list("/sp/productAds/list", access_token, profile_id, payload)
+
+    def create_product_ad(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sp/productAds",
+            "POST",
+            access_token,
+            profile_id,
+            self._wrap_product_ad_payload(payload),
+            "Create product ad",
+        )
+
+    def edit_product_ad(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sp/productAds",
+            "PUT",
+            access_token,
+            profile_id,
+            self._wrap_product_ad_payload(payload),
+            "Edit product ad",
+        )
+
+    def list_targets(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return self._post_list("/sp/targets/list", access_token, profile_id, payload)
+
+    def create_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sp/targets",
+            "POST",
+            access_token,
+            profile_id,
+            self._wrap_target_payload(payload),
+            "Create target",
+        )
+
+    def edit_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sp/targets",
+            "PUT",
+            access_token,
+            profile_id,
+            self._wrap_target_payload(payload),
+            "Edit target",
+        )
 
     def list_campaign_negative_keywords(
         self,
@@ -349,6 +514,8 @@ class AmazonAdsClient:
                 "keywords",
                 "negativeKeywords",
                 "campaignNegativeKeywords",
+                "productAds",
+                "targetingClauses",
                 "portfolios",
                 "results",
                 "items",
@@ -357,6 +524,27 @@ class AmazonAdsClient:
                 if isinstance(candidate, list):
                     return [item for item in candidate if isinstance(item, dict)]
         return []
+
+    def _send_mutation(
+        self,
+        path: str,
+        method: str,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+        label: str,
+    ) -> Any:
+        req = request.Request(
+            f"{get_region_base_url(self.env.region)}{path}",
+            method=method,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                **self._build_headers(access_token, accept_path=path),
+                "Content-Type": self._content_media_type(path),
+                "Amazon-Advertising-API-Scope": profile_id,
+            },
+        )
+        return self._send_json(req, label)
 
     def _build_headers(
         self,
@@ -377,8 +565,13 @@ class AmazonAdsClient:
             "/sp/campaigns/list": "application/vnd.spcampaign.v3+json",
             "/sp/campaigns": "application/vnd.spcampaign.v3+json",
             "/sp/adGroups/list": "application/vnd.spadgroup.v3+json",
+            "/sp/adGroups": "application/vnd.spadgroup.v3+json",
             "/sp/keywords/list": "application/vnd.spkeyword.v3+json",
             "/sp/keywords": "application/vnd.spkeyword.v3+json",
+            "/sp/productAds/list": "application/vnd.spproductad.v3+json",
+            "/sp/productAds": "application/vnd.spproductad.v3+json",
+            "/sp/targets/list": "application/vnd.sptargetingclause.v3+json",
+            "/sp/targets": "application/vnd.sptargetingclause.v3+json",
             "/sp/negativeKeywords/list": "application/vnd.spnegativekeyword.v3+json",
             "/sp/negativeKeywords": "application/vnd.spnegativekeyword.v3+json",
             "/sp/campaignNegativeKeywords/list": "application/vnd.spcampaignnegativekeyword.v3+json",
@@ -394,6 +587,18 @@ class AmazonAdsClient:
 
     def _wrap_campaign_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return payload if "campaigns" in payload else {"campaigns": [payload]}
+
+    def _wrap_portfolio_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return payload if "portfolios" in payload else {"portfolios": [payload]}
+
+    def _wrap_ad_group_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return payload if "adGroups" in payload else {"adGroups": [payload]}
+
+    def _wrap_product_ad_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return payload if "productAds" in payload else {"productAds": [payload]}
+
+    def _wrap_target_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return payload if "targetingClauses" in payload else {"targetingClauses": [payload]}
 
     def _wrap_negative_keyword_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return payload if "negativeKeywords" in payload else {"negativeKeywords": [payload]}

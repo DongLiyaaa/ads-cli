@@ -6,11 +6,12 @@ This harness exposes the current Amazon Ads workbench as an agent-usable CLI.
 
 - Amazon Ads OAuth health inspection
 - Profile discovery and marketplace resolution
-- Sponsored Products campaign metadata listing
-- Sponsored Products campaign state and budget editing
-- Portfolio listing
-- Sponsored Products ad group listing
-- Sponsored Products keyword listing and mutation
+- Portfolio listing, creation, and state editing
+- Sponsored Products campaign metadata listing, creation, state editing, budget editing, and placement bid adjustment interfaces
+- Sponsored Products ad group listing, creation, and state editing
+- Sponsored Products keyword listing, creation, bid editing, and state editing
+- Sponsored Products product ad listing, creation, and state editing
+- Sponsored Products ASIN target listing, creation, and state editing
 - Negative keyword listing and mutation
 - Sponsored Products report task creation, download, and local parsing
 - Snapshot output aligned with the current workbench proxy semantics
@@ -37,3 +38,20 @@ The CLI uses the same environment variables as the existing Vite proxy:
   - `meta.missingCredentials`
   - `data.campaignSummary`
   - `data.campaigns`
+
+## Placement bid adjustment
+
+`campaigns edit-placement-bids` only exposes the Amazon Ads placement bid adjustment request surface. The caller must provide exact percentages; the CLI does not calculate or recommend top of search, product pages, or rest of search values.
+
+## SP mutation coverage
+
+| SP object | Create/Add command | State command |
+|---|---|---|
+| Portfolio | `portfolios create` | `portfolios set-state` |
+| Campaign | `campaigns create` | `campaigns set-state` |
+| Ad group | `ad-groups create` | `ad-groups set-state` |
+| Keyword | `keywords add` | `keywords set-state` |
+| Product ad | `product-ads add` | `product-ads set-state` |
+| ASIN target | `targets add-asin` | `targets set-state` |
+
+All newly added write commands support `--dry-run` so agents can inspect the exact request payload before submitting to Amazon Ads.
