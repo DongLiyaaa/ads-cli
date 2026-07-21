@@ -152,14 +152,14 @@ OK
 
 ## Validation Notes
 
-- Installed command path resolved to `<venv>/bin/cli-anything-amazon-ads-ops-workbench`.
+- Installed command path resolved to `/Users/dongli/Documents/广告自动化/agent-harness/.venv/bin/cli-anything-amazon-ads-ops-workbench`.
 - New mock-path coverage now includes `portfolios list`, `ad-groups list`, `keywords set-state`, `negatives add-campaign`, and `reports parse-search-terms`.
 - Live validation on 2026-07-17 confirmed these command paths:
   - `portfolios list --marketplace US`
-  - `ad-groups list --marketplace US --campaign-id <CAMPAIGN_ID>`
-  - `keywords set-state ... --keyword-id <INVALID_KEYWORD_ID>` reaches business validation and returns `ENTITY_NOT_FOUND`
+  - `ad-groups list --marketplace US --campaign-id 205964387637073`
+  - `keywords set-state ... --keyword-id 999999999999999` reaches business validation and returns `ENTITY_NOT_FOUND`
   - `negatives add-campaign ... --campaign-id 0` reaches business validation and returns `ENTITY_NOT_FOUND`
-- `reports parse-search-terms --input-file ~/Downloads/spSearchTerm-example.json` parsed 58 rows successfully
+- `reports parse-search-terms --input-file /Users/dongli/Downloads/spSearchTerm-160f042f-c1b8-4192-938b-6970860a4438.json` parsed 58 rows successfully
 
 ## Test Results
 
@@ -185,25 +185,85 @@ OK
 
 ## Validation Notes
 
-- Installed command path remained `<venv>/bin/cli-anything-amazon-ads-ops-workbench`.
+- Installed command path remained `/Users/dongli/Documents/广告自动化/agent-harness/.venv/bin/cli-anything-amazon-ads-ops-workbench`.
 - Mock-path coverage now includes `campaigns set-state`, `campaigns edit-budget`, `negatives set-state`, and `reports parse-sp-keywords`.
 - Live validation on 2026-07-17 confirmed these list/read paths:
   - `profiles resolve --marketplace US`
   - `campaigns list --marketplace US`
   - `portfolios list --marketplace US`
-  - `ad-groups list --marketplace US --campaign-id <CAMPAIGN_ID>`
-  - `keywords list --marketplace US --campaign-id <CAMPAIGN_ID>`
-  - `negatives list --marketplace US --campaign-id <CAMPAIGN_ID> --scope both`
+  - `ad-groups list --marketplace US --campaign-id 205964387637073`
+  - `keywords list --marketplace US --campaign-id 205964387637073`
+  - `negatives list --marketplace US --campaign-id 205964387637073 --scope both`
 - Live validation on 2026-07-17 confirmed these mutation shapes via safe invalid-id probes:
-  - `campaigns set-state --campaign-id <INVALID_CAMPAIGN_ID> --state PAUSED` reached business validation and returned `ENTITY_NOT_FOUND`
-  - `campaigns edit-budget --campaign-id <INVALID_CAMPAIGN_ID> --budget 5.0` reached business validation and returned `ENTITY_NOT_FOUND`
-  - `keywords set-state --keyword-id <INVALID_KEYWORD_ID> ...` reached business validation and returned `ENTITY_NOT_FOUND`
-  - `keywords edit-bid --keyword-id <INVALID_KEYWORD_ID> ...` reached business validation and returned `ENTITY_NOT_FOUND`
-  - `negatives set-state --scope adGroup --negative-keyword-id <INVALID_NEGATIVE_ID>` reached business validation and returned `ENTITY_NOT_FOUND`
-  - `negatives set-state --scope campaign --negative-keyword-id <INVALID_NEGATIVE_ID>` reached business validation and returned `ENTITY_NOT_FOUND`
-  - `negatives add-ad-group --campaign-id <INVALID_CAMPAIGN_ID> --ad-group-id <INVALID_AD_GROUP_ID> ...` reached business validation and returned `adGroupId cannot be found`
-  - `negatives add-campaign --campaign-id <INVALID_CAMPAIGN_ID> ...` reached business validation and returned `ENTITY_NOT_FOUND`
+  - `campaigns set-state --campaign-id 999999999999999 --state PAUSED` reached business validation and returned `ENTITY_NOT_FOUND`
+  - `campaigns edit-budget --campaign-id 999999999999999 --budget 5.0` reached business validation and returned `ENTITY_NOT_FOUND`
+  - `keywords set-state --keyword-id 999999999999999 ...` reached business validation and returned `ENTITY_NOT_FOUND`
+  - `keywords edit-bid --keyword-id 999999999999999 ...` reached business validation and returned `ENTITY_NOT_FOUND`
+  - `negatives set-state --scope adGroup --negative-keyword-id 999999999999999` reached business validation and returned `ENTITY_NOT_FOUND`
+  - `negatives set-state --scope campaign --negative-keyword-id 999999999999999` reached business validation and returned `ENTITY_NOT_FOUND`
+  - `negatives add-ad-group --campaign-id 999999999999999 --ad-group-id 999999999999999 ...` reached business validation and returned `adGroupId cannot be found`
+  - `negatives add-campaign --campaign-id 999999999999999 ...` reached business validation and returned `ENTITY_NOT_FOUND`
 - A live shape bug was found and fixed during this validation round:
   - `keywords list` and `negatives list` originally sent bare arrays for `campaignIdFilter` and `adGroupIdFilter`
   - Amazon Ads expected the v3 `{\"include\": [..]}` shape, and the fixed commands now return live data correctly
-- Live report orchestration on 2026-07-17 created an `spKeywords` report task, but the task was still `PENDING` during the validation window; download and real-file parse were therefore not completed in that run.
+- Live report orchestration on 2026-07-17 created `spKeywords` report id `8e054314-bb48-4d0e-ba8c-8cc77e716921`, but the task was still `PENDING` as of `2026-07-17T12:10:12.918Z`; download and real-file parse were therefore not completed in this run.
+
+## Test Results
+
+Validated on 2026-07-22 after adding the Sponsored Products campaign placement bid adjustment interface.
+
+### `PYTHONPATH=/Users/dongli/Documents/广告自动化/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
+
+```text
+----------------------------------------------------------------------
+Ran 64 tests in 1.573s
+
+OK
+```
+
+### `PYTHONPATH=/Users/dongli/Documents/广告自动化/agent-harness python3 -m compileall -q cli_anything/amazon_ads_ops_workbench`
+
+```text
+OK
+```
+
+## Summary Statistics
+
+- Total tests: 64
+- Pass rate: 100%
+- New coverage includes `campaigns edit-placement-bids` dry-run, missing-credential fallback, user-value requirement, placement payload shape, optional strategy, and 0-900 range validation.
+
+## Validation Notes
+
+- `pytest` was not installed in the active Python 3.14 environment, so validation used the existing `unittest` suite.
+- Dry-run output confirmed the payload includes only user-supplied placement percentages and does not submit to Amazon Ads.
+
+## Test Results
+
+Validated on 2026-07-22 after completing the Sponsored Products create/add/state mutation surface.
+
+### `PYTHONPATH=/Users/dongli/Documents/广告自动化/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
+
+```text
+----------------------------------------------------------------------
+Ran 91 tests in 2.072s
+
+OK
+```
+
+### `PYTHONPATH=/Users/dongli/Documents/广告自动化/agent-harness python3 -m compileall -q cli_anything/amazon_ads_ops_workbench`
+
+```text
+OK
+```
+
+## Summary Statistics
+
+- Total tests: 91
+- Pass rate: 100%
+- New coverage includes portfolio create/state, campaign create, ad group create/state, keyword add, product ad list/add/state, ASIN target list/add/state, new media types, new wrappers, and dry-run payload contracts.
+
+## Validation Notes
+
+- All newly added write commands support `--dry-run`.
+- This run validated request construction and CLI command routing without submitting live account mutations.

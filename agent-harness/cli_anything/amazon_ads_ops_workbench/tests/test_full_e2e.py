@@ -243,6 +243,316 @@ class CliE2ETests(unittest.TestCase):
         self.assertEqual(payload["meta"]["mode"], "mock")
         self.assertIn("missingCredentials", payload["meta"])
 
+    def test_campaigns_edit_placement_bids_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "campaigns",
+                "edit-placement-bids",
+                "--campaign-id",
+                "1",
+                "--top-of-search",
+                "100",
+                "--product-pages",
+                "25",
+                "--rest-of-search",
+                "0",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "dry-run")
+        self.assertEqual(payload["meta"]["status"], "not_submitted")
+        self.assertEqual(
+            payload["data"]["payload"]["campaigns"][0]["dynamicBidding"][
+                "placementBidding"
+            ],
+            [
+                {"placement": "PLACEMENT_TOP", "percentage": 100},
+                {"placement": "PLACEMENT_PRODUCT_PAGE", "percentage": 25},
+                {"placement": "PLACEMENT_REST_OF_SEARCH", "percentage": 0},
+            ],
+        )
+        self.assertEqual(
+            payload["data"]["placementPolicy"],
+            "user_supplied_percentages_only",
+        )
+
+    def test_campaigns_edit_placement_bids_without_credentials(self):
+        result = self._run(
+            [
+                "--json",
+                "campaigns",
+                "edit-placement-bids",
+                "--campaign-id",
+                "1",
+                "--top-of-search",
+                "50",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "mock")
+        self.assertIn("missingCredentials", payload["meta"])
+        self.assertEqual(payload["data"]["requested"]["topOfSearch"], 50)
+
+    def test_campaigns_edit_placement_bids_requires_user_value(self):
+        result = self._run(
+            [
+                "--json",
+                "campaigns",
+                "edit-placement-bids",
+                "--campaign-id",
+                "1",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("At least one placement bid adjustment", result.stderr)
+
+    def test_campaigns_create_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "campaigns",
+                "create",
+                "--name",
+                "T11 Manual",
+                "--targeting-type",
+                "MANUAL",
+                "--budget",
+                "10",
+                "--start-date",
+                "2026-07-22",
+                "--strategy",
+                "MANUAL",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        campaign = payload["data"]["payload"]["campaigns"][0]
+        self.assertEqual(campaign["name"], "T11 Manual")
+        self.assertEqual(campaign["targetingType"], "MANUAL")
+        self.assertEqual(campaign["dynamicBidding"]["strategy"], "MANUAL")
+
+    def test_portfolios_create_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "portfolios",
+                "create",
+                "--name",
+                "T11",
+                "--budget",
+                "100",
+                "--currency-code",
+                "USD",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        portfolio = payload["data"]["payload"]["portfolios"][0]
+        self.assertEqual(portfolio["name"], "T11")
+        self.assertEqual(portfolio["budget"]["amount"], 100.0)
+
+    def test_portfolios_set_state_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "portfolios",
+                "set-state",
+                "--portfolio-id",
+                "p1",
+                "--state",
+                "ARCHIVED",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["data"]["payload"]["portfolios"][0]["state"], "ARCHIVED")
+
+    def test_ad_groups_create_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "ad-groups",
+                "create",
+                "--campaign-id",
+                "1",
+                "--name",
+                "Exact Core",
+                "--default-bid",
+                "0.72",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        ad_group = payload["data"]["payload"]["adGroups"][0]
+        self.assertEqual(ad_group["campaignId"], "1")
+        self.assertEqual(ad_group["defaultBid"], 0.72)
+
+    def test_ad_groups_set_state_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "ad-groups",
+                "set-state",
+                "--campaign-id",
+                "1",
+                "--ad-group-id",
+                "2",
+                "--state",
+                "PAUSED",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["data"]["payload"]["adGroups"][0]["state"], "PAUSED")
+
+    def test_keywords_add_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "keywords",
+                "add",
+                "--campaign-id",
+                "1",
+                "--ad-group-id",
+                "2",
+                "--keyword-text",
+                "ai recorder",
+                "--match-type",
+                "EXACT",
+                "--bid",
+                "0.91",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        keyword = payload["data"]["payload"]["keywords"][0]
+        self.assertEqual(keyword["keywordText"], "ai recorder")
+        self.assertEqual(keyword["matchType"], "EXACT")
+
+    def test_product_ads_list_without_credentials(self):
+        result = self._run(
+            ["--json", "product-ads", "list", "--campaign-id", "1"],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "mock")
+        self.assertEqual(payload["data"]["productAds"], [])
+
+    def test_product_ads_add_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "product-ads",
+                "add",
+                "--campaign-id",
+                "1",
+                "--ad-group-id",
+                "2",
+                "--sku",
+                "SKU-1",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        product_ad = payload["data"]["payload"]["productAds"][0]
+        self.assertEqual(product_ad["sku"], "SKU-1")
+        self.assertEqual(product_ad["state"], "ENABLED")
+
+    def test_product_ads_set_state_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "product-ads",
+                "set-state",
+                "--product-ad-id",
+                "9",
+                "--state",
+                "ARCHIVED",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["data"]["payload"]["productAds"][0]["state"], "ARCHIVED")
+
+    def test_targets_list_without_credentials(self):
+        result = self._run(
+            ["--json", "targets", "list", "--campaign-id", "1"],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "mock")
+        self.assertEqual(payload["data"]["targets"], [])
+
+    def test_targets_add_asin_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "targets",
+                "add-asin",
+                "--campaign-id",
+                "1",
+                "--ad-group-id",
+                "2",
+                "--asin",
+                "B000000001",
+                "--bid",
+                "0.88",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        target = payload["data"]["payload"]["targetingClauses"][0]
+        self.assertEqual(target["expression"][0]["type"], "ASIN_SAME_AS")
+        self.assertEqual(target["bid"], 0.88)
+
+    def test_targets_set_state_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "targets",
+                "set-state",
+                "--target-id",
+                "9",
+                "--state",
+                "PAUSED",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(
+            payload["data"]["payload"]["targetingClauses"][0]["state"],
+            "PAUSED",
+        )
+
     def test_keywords_set_state_without_credentials(self):
         result = self._run(
             [

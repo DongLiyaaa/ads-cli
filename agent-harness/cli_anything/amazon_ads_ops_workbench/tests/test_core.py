@@ -13,21 +13,36 @@ from cli_anything.amazon_ads_ops_workbench.core.env import AdsEnvironment, norma
 from cli_anything.amazon_ads_ops_workbench.core.client import AmazonAdsClient
 from cli_anything.amazon_ads_ops_workbench.core.campaigns import (
     build_campaign_budget_payload,
+    build_campaign_create_payload,
+    build_campaign_placement_bid_payload,
     build_campaign_state_payload,
+    build_portfolio_create_payload,
+    build_portfolio_state_payload,
 )
 from cli_anything.amazon_ads_ops_workbench.core.keywords import (
     build_ad_groups_filter,
+    build_ad_group_create_payload,
     build_ad_group_negative_payload,
+    build_ad_group_state_payload,
+    build_asin_target_create_payload,
     build_campaign_negative_payload,
+    build_keyword_create_payload,
     build_keyword_edit_payload,
     build_keyword_state_payload,
     build_keywords_filter,
     build_negative_list_filter,
     build_negative_state_payload,
+    build_product_ad_create_payload,
+    build_product_ad_state_payload,
+    build_product_ads_filter,
+    build_target_state_payload,
+    build_targets_filter,
     normalize_ad_group_row,
     normalize_keyword_row,
     normalize_negative_row,
     normalize_portfolio_row,
+    normalize_product_ad_row,
+    normalize_target_row,
 )
 from cli_anything.amazon_ads_ops_workbench.core.reports import (
     build_download_target_path,
@@ -90,6 +105,14 @@ class EnvTests(unittest.TestCase):
         self.assertEqual(
             client._content_media_type("/sp/campaigns/list"),
             "application/vnd.spcampaign.v3+json",
+        )
+        self.assertEqual(
+            client._content_media_type("/sp/productAds/list"),
+            "application/vnd.spproductad.v3+json",
+        )
+        self.assertEqual(
+            client._content_media_type("/sp/targets"),
+            "application/vnd.sptargetingclause.v3+json",
         )
         self.assertEqual(client._content_media_type("/reporting/reports"), "application/json")
 
@@ -175,6 +198,123 @@ class KeywordNormalizationTests(unittest.TestCase):
         self.assertEqual(payload["adGroupIdFilter"], {"include": ["456"]})
         self.assertEqual(payload["stateFilter"], {"include": ["PAUSED"]})
 
+    def test_build_product_ads_filter_includes_optional_filters(self):
+        payload = build_product_ads_filter(
+            campaign_id="123",
+            ad_group_id="456",
+            product_ad_id="789",
+            state_filter="ARCHIVED",
+        )
+        self.assertEqual(payload["campaignIdFilter"], {"include": ["123"]})
+        self.assertEqual(payload["adGroupIdFilter"], {"include": ["456"]})
+        self.assertEqual(payload["productAdIdFilter"], {"include": ["789"]})
+        self.assertEqual(payload["stateFilter"], {"include": ["ARCHIVED"]})
+
+    def test_build_targets_filter_includes_optional_filters(self):
+        payload = build_targets_filter(
+            campaign_id="123",
+            ad_group_id="456",
+            target_id="789",
+            state_filter="PAUSED",
+        )
+        self.assertEqual(payload["campaignIdFilter"], {"include": ["123"]})
+        self.assertEqual(payload["adGroupIdFilter"], {"include": ["456"]})
+        self.assertEqual(payload["targetIdFilter"], {"include": ["789"]})
+        self.assertEqual(payload["stateFilter"], {"include": ["PAUSED"]})
+
+    def test_build_ad_group_create_payload_uses_expected_fields(self):
+        payload = build_ad_group_create_payload(
+            campaign_id="1",
+            name="Core Exact",
+            default_bid=0.72,
+            state="paused",
+        )
+        self.assertEqual(payload["campaignId"], "1")
+        self.assertEqual(payload["name"], "Core Exact")
+        self.assertEqual(payload["defaultBid"], 0.72)
+        self.assertEqual(payload["state"], "PAUSED")
+
+    def test_build_ad_group_state_payload_uses_expected_fields(self):
+        payload = build_ad_group_state_payload(
+            campaign_id="1",
+            ad_group_id="2",
+            state="archived",
+        )
+        self.assertEqual(payload["campaignId"], "1")
+        self.assertEqual(payload["adGroupId"], "2")
+        self.assertEqual(payload["state"], "ARCHIVED")
+
+    def test_build_keyword_create_payload_uses_expected_fields(self):
+        payload = build_keyword_create_payload(
+            campaign_id="1",
+            ad_group_id="2",
+            keyword_text="ai recorder",
+            match_type="exact",
+            bid=0.91,
+            state="enabled",
+        )
+        self.assertEqual(payload["campaignId"], "1")
+        self.assertEqual(payload["adGroupId"], "2")
+        self.assertEqual(payload["keywordText"], "ai recorder")
+        self.assertEqual(payload["matchType"], "EXACT")
+        self.assertEqual(payload["bid"], 0.91)
+        self.assertEqual(payload["state"], "ENABLED")
+
+    def test_build_product_ad_create_payload_requires_one_identifier(self):
+        payload = build_product_ad_create_payload(
+            campaign_id="1",
+            ad_group_id="2",
+            sku="SKU-1",
+        )
+        self.assertEqual(payload["sku"], "SKU-1")
+        self.assertNotIn("asin", payload)
+        with self.assertRaises(ValueError):
+            build_product_ad_create_payload(campaign_id="1", ad_group_id="2")
+        with self.assertRaises(ValueError):
+            build_product_ad_create_payload(
+                campaign_id="1",
+                ad_group_id="2",
+                sku="SKU-1",
+                asin="B000000001",
+            )
+
+    def test_build_product_ad_state_payload_uses_expected_fields(self):
+        payload = build_product_ad_state_payload(
+            product_ad_id="9",
+            campaign_id="1",
+            ad_group_id="2",
+            state="paused",
+        )
+        self.assertEqual(payload["productAdId"], "9")
+        self.assertEqual(payload["campaignId"], "1")
+        self.assertEqual(payload["adGroupId"], "2")
+        self.assertEqual(payload["state"], "PAUSED")
+
+    def test_build_asin_target_create_payload_uses_expected_fields(self):
+        payload = build_asin_target_create_payload(
+            campaign_id="1",
+            ad_group_id="2",
+            asin="B000000001",
+            bid=0.88,
+        )
+        self.assertEqual(payload["expressionType"], "MANUAL")
+        self.assertEqual(payload["expression"], [{"type": "ASIN_SAME_AS", "value": "B000000001"}])
+        self.assertEqual(payload["bid"], 0.88)
+
+    def test_build_target_state_payload_uses_expected_fields(self):
+        payload = build_target_state_payload(
+            target_id="9",
+            campaign_id="1",
+            ad_group_id="2",
+            state="archived",
+            bid=0.77,
+        )
+        self.assertEqual(payload["targetId"], "9")
+        self.assertEqual(payload["campaignId"], "1")
+        self.assertEqual(payload["adGroupId"], "2")
+        self.assertEqual(payload["state"], "ARCHIVED")
+        self.assertEqual(payload["bid"], 0.77)
+
     def test_normalize_keyword_row_keeps_bid_and_match_type(self):
         row = normalize_keyword_row(
             {
@@ -221,6 +361,41 @@ class KeywordNormalizationTests(unittest.TestCase):
         self.assertEqual(row["campaignId"], "34")
         self.assertEqual(row["name"], "Exact Core")
         self.assertEqual(row["defaultBid"], 0.77)
+
+    def test_normalize_product_ad_row_keeps_ids_and_product(self):
+        row = normalize_product_ad_row(
+            {
+                "productAdId": 12,
+                "campaignId": 34,
+                "adGroupId": 56,
+                "sku": "SKU-1",
+                "asin": "B000000001",
+                "state": "ENABLED",
+            }
+        )
+        self.assertEqual(row["productAdId"], "12")
+        self.assertEqual(row["campaignId"], "34")
+        self.assertEqual(row["adGroupId"], "56")
+        self.assertEqual(row["sku"], "SKU-1")
+        self.assertEqual(row["asin"], "B000000001")
+
+    def test_normalize_target_row_keeps_expression_and_bid(self):
+        row = normalize_target_row(
+            {
+                "targetId": 12,
+                "campaignId": 34,
+                "adGroupId": 56,
+                "expressionType": "MANUAL",
+                "expression": [{"type": "ASIN_SAME_AS", "value": "B000000001"}],
+                "bid": "0.77",
+                "state": "ENABLED",
+            }
+        )
+        self.assertEqual(row["targetId"], "12")
+        self.assertEqual(row["campaignId"], "34")
+        self.assertEqual(row["adGroupId"], "56")
+        self.assertEqual(row["bid"], 0.77)
+        self.assertEqual(row["expression"][0]["value"], "B000000001")
 
     def test_normalize_portfolio_row_keeps_budget(self):
         row = normalize_portfolio_row(
@@ -353,6 +528,22 @@ class KeywordNormalizationTests(unittest.TestCase):
 
 
 class CampaignMutationTests(unittest.TestCase):
+    def test_build_campaign_create_payload_uses_expected_fields(self):
+        payload = build_campaign_create_payload(
+            name="T11 Manual",
+            targeting_type="manual",
+            budget=10.0,
+            start_date="2026-07-22",
+            strategy="manual",
+            portfolio_id="p1",
+        )
+        self.assertEqual(payload["name"], "T11 Manual")
+        self.assertEqual(payload["targetingType"], "MANUAL")
+        self.assertEqual(payload["budget"], {"budgetType": "DAILY", "budget": 10.0})
+        self.assertEqual(payload["startDate"], "2026-07-22")
+        self.assertEqual(payload["dynamicBidding"], {"strategy": "MANUAL"})
+        self.assertEqual(payload["portfolioId"], "p1")
+
     def test_build_campaign_state_payload_uses_expected_fields(self):
         payload = build_campaign_state_payload(
             campaign_id="1",
@@ -370,6 +561,63 @@ class CampaignMutationTests(unittest.TestCase):
         self.assertEqual(payload["budget"]["budgetType"], "DAILY")
         self.assertEqual(payload["budget"]["budget"], 5.0)
 
+    def test_build_campaign_placement_bid_payload_uses_user_supplied_values(self):
+        payload = build_campaign_placement_bid_payload(
+            campaign_id="1",
+            top_of_search=100,
+            product_pages=25,
+            rest_of_search=0,
+        )
+        self.assertEqual(payload["campaignId"], "1")
+        self.assertEqual(
+            payload["dynamicBidding"]["placementBidding"],
+            [
+                {"placement": "PLACEMENT_TOP", "percentage": 100},
+                {"placement": "PLACEMENT_PRODUCT_PAGE", "percentage": 25},
+                {"placement": "PLACEMENT_REST_OF_SEARCH", "percentage": 0},
+            ],
+        )
+        self.assertNotIn("strategy", payload["dynamicBidding"])
+
+    def test_build_campaign_placement_bid_payload_includes_optional_strategy(self):
+        payload = build_campaign_placement_bid_payload(
+            campaign_id="1",
+            top_of_search=50,
+            strategy="auto_for_sales",
+        )
+        self.assertEqual(payload["dynamicBidding"]["strategy"], "AUTO_FOR_SALES")
+        self.assertEqual(
+            payload["dynamicBidding"]["placementBidding"],
+            [{"placement": "PLACEMENT_TOP", "percentage": 50}],
+        )
+
+    def test_build_campaign_placement_bid_payload_requires_a_user_value(self):
+        with self.assertRaises(ValueError):
+            build_campaign_placement_bid_payload(campaign_id="1")
+
+    def test_build_campaign_placement_bid_payload_rejects_out_of_range_value(self):
+        with self.assertRaises(ValueError):
+            build_campaign_placement_bid_payload(campaign_id="1", top_of_search=901)
+
+    def test_build_portfolio_create_payload_uses_expected_fields(self):
+        payload = build_portfolio_create_payload(
+            name="Portfolio A",
+            state="enabled",
+            budget=100.0,
+            budget_policy="dateRange",
+            currency_code="usd",
+        )
+        self.assertEqual(payload["name"], "Portfolio A")
+        self.assertEqual(payload["state"], "ENABLED")
+        self.assertEqual(payload["budget"]["amount"], 100.0)
+        self.assertEqual(payload["budget"]["policy"], "dateRange")
+        self.assertEqual(payload["budget"]["currencyCode"], "USD")
+
+    def test_build_portfolio_state_payload_uses_expected_fields(self):
+        payload = build_portfolio_state_payload(portfolio_id="p1", state="archived")
+        self.assertEqual(payload["portfolioId"], "p1")
+        self.assertEqual(payload["state"], "ARCHIVED")
+
     def test_edit_campaign_wraps_campaigns_array(self):
         env = AdsEnvironment(
             client_id="client",
@@ -384,6 +632,24 @@ class CampaignMutationTests(unittest.TestCase):
         self.assertEqual(
             client._wrap_campaign_payload(payload),
             {"campaigns": [payload]},
+        )
+
+    def test_client_wraps_new_mutation_payloads(self):
+        env = AdsEnvironment(
+            client_id="client",
+            client_secret="secret",
+            refresh_token="refresh",
+            profile_id="123",
+            region="NA",
+            marketplace="US",
+        )
+        client = AmazonAdsClient(env)
+        self.assertEqual(client._wrap_portfolio_payload({"name": "A"}), {"portfolios": [{"name": "A"}]})
+        self.assertEqual(client._wrap_ad_group_payload({"name": "A"}), {"adGroups": [{"name": "A"}]})
+        self.assertEqual(client._wrap_product_ad_payload({"sku": "S"}), {"productAds": [{"sku": "S"}]})
+        self.assertEqual(
+            client._wrap_target_payload({"targetId": "1"}),
+            {"targetingClauses": [{"targetId": "1"}]},
         )
 
 
