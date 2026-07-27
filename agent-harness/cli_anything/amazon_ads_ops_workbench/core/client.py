@@ -295,6 +295,44 @@ class AmazonAdsClient:
             "Edit target",
         )
 
+    def list_negative_targets(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return self._post_list("/sp/negativeTargets/list", access_token, profile_id, payload)
+
+    def create_negative_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sp/negativeTargets",
+            "POST",
+            access_token,
+            profile_id,
+            self._wrap_negative_target_payload(payload),
+            "Create negative target",
+        )
+
+    def edit_negative_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sp/negativeTargets",
+            "PUT",
+            access_token,
+            profile_id,
+            self._wrap_negative_target_payload(payload),
+            "Edit negative target",
+        )
+
     def list_campaign_negative_keywords(
         self,
         access_token: str,
@@ -387,6 +425,82 @@ class AmazonAdsClient:
             },
         )
         return self._send_json(req, "Edit campaign negative keyword")
+
+    def list_campaign_negative_targets(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return self._post_list(
+            "/sp/campaignNegativeTargets/list",
+            access_token,
+            profile_id,
+            payload,
+        )
+
+    def create_campaign_negative_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sp/campaignNegativeTargets",
+            "POST",
+            access_token,
+            profile_id,
+            self._wrap_campaign_negative_target_payload(payload),
+            "Create campaign negative target",
+        )
+
+    def edit_campaign_negative_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sp/campaignNegativeTargets",
+            "PUT",
+            access_token,
+            profile_id,
+            self._wrap_campaign_negative_target_payload(payload),
+            "Edit campaign negative target",
+        )
+
+    def send_sp_raw(
+        self,
+        access_token: str,
+        profile_id: str,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | list[Any] | None = None,
+        accept: str | None = None,
+        content_type: str | None = None,
+    ) -> Any:
+        if not path.startswith("/sp/"):
+            raise ValueError("Raw SP requests must use a path that starts with /sp/.")
+        normalized_method = method.upper()
+        data = None
+        headers = {
+            **self._build_headers(access_token, accept_path=path),
+            "Amazon-Advertising-API-Scope": profile_id,
+        }
+        if accept:
+            headers["Accept"] = accept
+        if payload is not None:
+            data = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = content_type or self._content_media_type(path)
+        elif content_type:
+            headers["Content-Type"] = content_type
+        req = request.Request(
+            f"{get_region_base_url(self.env.region)}{path}",
+            method=normalized_method,
+            data=data,
+            headers=headers,
+        )
+        return self._send_json(req, f"Raw SP request {normalized_method} {path}")
 
     def create_report(
         self,
@@ -516,6 +630,8 @@ class AmazonAdsClient:
                 "campaignNegativeKeywords",
                 "productAds",
                 "targetingClauses",
+                "negativeTargetingClauses",
+                "campaignNegativeTargetingClauses",
                 "portfolios",
                 "results",
                 "items",
@@ -572,10 +688,14 @@ class AmazonAdsClient:
             "/sp/productAds": "application/vnd.spproductad.v3+json",
             "/sp/targets/list": "application/vnd.sptargetingclause.v3+json",
             "/sp/targets": "application/vnd.sptargetingclause.v3+json",
+            "/sp/negativeTargets/list": "application/vnd.spnegativetargetingclause.v3+json",
+            "/sp/negativeTargets": "application/vnd.spnegativetargetingclause.v3+json",
             "/sp/negativeKeywords/list": "application/vnd.spnegativekeyword.v3+json",
             "/sp/negativeKeywords": "application/vnd.spnegativekeyword.v3+json",
             "/sp/campaignNegativeKeywords/list": "application/vnd.spcampaignnegativekeyword.v3+json",
             "/sp/campaignNegativeKeywords": "application/vnd.spcampaignnegativekeyword.v3+json",
+            "/sp/campaignNegativeTargets/list": "application/vnd.spcampaignnegativetargetingclause.v3+json",
+            "/sp/campaignNegativeTargets": "application/vnd.spcampaignnegativetargetingclause.v3+json",
         }
         return media_types.get(path or "", "")
 
@@ -600,6 +720,11 @@ class AmazonAdsClient:
     def _wrap_target_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return payload if "targetingClauses" in payload else {"targetingClauses": [payload]}
 
+    def _wrap_negative_target_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if "negativeTargetingClauses" in payload:
+            return payload
+        return {"negativeTargetingClauses": [payload]}
+
     def _wrap_negative_keyword_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return payload if "negativeKeywords" in payload else {"negativeKeywords": [payload]}
 
@@ -607,6 +732,11 @@ class AmazonAdsClient:
         if "campaignNegativeKeywords" in payload:
             return payload
         return {"campaignNegativeKeywords": [payload]}
+
+    def _wrap_campaign_negative_target_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if "campaignNegativeTargetingClauses" in payload:
+            return payload
+        return {"campaignNegativeTargetingClauses": [payload]}
 
     def _send_json(self, req: request.Request, label: str) -> Any:
         try:

@@ -63,6 +63,18 @@ def build_campaign_budget_payload(
     }
 
 
+def build_campaign_bidding_strategy_payload(
+    campaign_id: str,
+    strategy: str,
+) -> dict[str, Any]:
+    return {
+        "campaignId": campaign_id,
+        "dynamicBidding": {
+            "strategy": strategy.upper(),
+        },
+    }
+
+
 def build_campaign_placement_bid_payload(
     campaign_id: str,
     top_of_search: int | None = None,
