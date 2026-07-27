@@ -9,6 +9,7 @@ import click
 
 from cli_anything.amazon_ads_ops_workbench import __version__
 from cli_anything.amazon_ads_ops_workbench.core.campaigns import (
+    build_campaign_bidding_strategy_payload,
     build_campaign_budget_payload,
     build_campaign_create_payload,
     build_campaign_placement_bid_payload,
@@ -20,25 +21,33 @@ from cli_anything.amazon_ads_ops_workbench.core.client import AmazonAdsClient
 from cli_anything.amazon_ads_ops_workbench.core.env import load_ads_environment
 from cli_anything.amazon_ads_ops_workbench.core.keywords import (
     build_ad_groups_filter,
+    build_ad_group_bid_payload,
     build_ad_group_create_payload,
     build_ad_group_negative_payload,
     build_ad_group_state_payload,
     build_asin_target_create_payload,
     build_campaign_negative_payload,
+    build_category_target_create_payload,
+    build_expression_target_create_payload,
     build_keyword_create_payload,
     build_keyword_edit_payload,
     build_keyword_state_payload,
     build_keywords_filter,
     build_negative_state_payload,
     build_negative_list_filter,
+    build_negative_target_payload,
+    build_negative_target_state_payload,
+    build_negative_targets_filter,
     build_product_ad_create_payload,
     build_product_ad_state_payload,
     build_product_ads_filter,
+    build_target_bid_payload,
     build_target_state_payload,
     build_targets_filter,
     normalize_ad_group_row,
     normalize_keyword_row,
     normalize_negative_row,
+    normalize_negative_target_row,
     normalize_portfolio_row,
     normalize_product_ad_row,
     normalize_target_row,
@@ -127,6 +136,49 @@ def emit_dry_run(
         },
         ctx.obj["json"],
     )
+
+
+def parse_predicate_options(
+    predicate: tuple[str, ...],
+    asin: str | None = None,
+    category_id: str | None = None,
+) -> list[dict[str, Any]]:
+    predicates: list[dict[str, Any]] = []
+    if asin:
+        predicates.append({"type": "ASIN_SAME_AS", "value": asin})
+    if category_id:
+        predicates.append({"type": "CATEGORY_SAME_AS", "value": category_id})
+    for raw_predicate in predicate:
+        raw = raw_predicate.strip()
+        if not raw:
+            continue
+        if "=" in raw:
+            predicate_type, value = raw.split("=", 1)
+        elif ":" in raw:
+            predicate_type, value = raw.split(":", 1)
+        else:
+            predicate_type, value = raw, ""
+        item: dict[str, Any] = {"type": predicate_type.strip().upper()}
+        if value.strip():
+            item["value"] = value.strip()
+        predicates.append(item)
+    if not predicates:
+        raise click.BadParameter(
+            "At least one of --asin, --category-id, or --predicate is required."
+        )
+    return predicates
+
+
+def parse_json_payload(raw_payload: str | None) -> dict[str, Any] | list[Any] | None:
+    if raw_payload is None or raw_payload.strip() == "":
+        return None
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter(f"payload-json is not valid JSON: {exc}") from exc
+    if not isinstance(payload, (dict, list)):
+        raise click.BadParameter("payload-json must decode to a JSON object or array.")
+    return payload
 
 
 @click.group(invoke_without_command=True)
@@ -311,13 +363,23 @@ def campaigns_create(
 @click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
 @click.option("--campaign-id", required=True, help="Campaign id.")
 @click.option("--state", required=True, help="ENABLED, PAUSED, or ARCHIVED.")
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
 @click.pass_context
 def campaigns_set_state(
     ctx: click.Context,
     marketplace: str | None,
     campaign_id: str,
     state: str,
+    dry_run: bool,
 ) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_campaign_state_payload(campaign_id=campaign_id, state=state)
+    request_payload = {"campaigns": [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "campaigns.set-state")
+        return
+
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
         marketplace
     )
@@ -331,12 +393,12 @@ def campaigns_set_state(
                     "marketplace": target_marketplace,
                     "campaignId": campaign_id,
                     "state": state,
+                    "payload": request_payload,
                 },
             ),
             ctx.obj["json"],
         )
         return
-    payload = build_campaign_state_payload(campaign_id=campaign_id, state=state)
     result = client.edit_campaign(access_token, profile_id, payload)
     emit(
         {
@@ -346,7 +408,7 @@ def campaigns_set_state(
                 "profileId": profile_id,
                 "marketplace": target_marketplace,
             },
-            "data": {"result": result},
+            "data": {"result": result, "payload": request_payload},
         },
         ctx.obj["json"],
     )
@@ -357,6 +419,7 @@ def campaigns_set_state(
 @click.option("--campaign-id", required=True, help="Campaign id.")
 @click.option("--budget", required=True, type=float, help="New campaign daily budget.")
 @click.option("--budget-type", default="DAILY", help="Currently only DAILY is supported.")
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
 @click.pass_context
 def campaigns_edit_budget(
     ctx: click.Context,
@@ -364,7 +427,20 @@ def campaigns_edit_budget(
     campaign_id: str,
     budget: float,
     budget_type: str,
+    dry_run: bool,
 ) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_campaign_budget_payload(
+        campaign_id=campaign_id,
+        budget=budget,
+        budget_type=budget_type,
+    )
+    request_payload = {"campaigns": [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "campaigns.edit-budget")
+        return
+
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
         marketplace
     )
@@ -379,16 +455,12 @@ def campaigns_edit_budget(
                     "campaignId": campaign_id,
                     "budget": budget,
                     "budgetType": budget_type,
+                    "payload": request_payload,
                 },
             ),
             ctx.obj["json"],
         )
         return
-    payload = build_campaign_budget_payload(
-        campaign_id=campaign_id,
-        budget=budget,
-        budget_type=budget_type,
-    )
     result = client.edit_campaign(access_token, profile_id, payload)
     emit(
         {
@@ -398,7 +470,78 @@ def campaigns_edit_budget(
                 "profileId": profile_id,
                 "marketplace": target_marketplace,
             },
-            "data": {"result": result},
+            "data": {"result": result, "payload": request_payload},
+        },
+        ctx.obj["json"],
+    )
+
+
+@campaigns.command("edit-bidding-strategy")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--campaign-id", required=True, help="Campaign id.")
+@click.option(
+    "--strategy",
+    required=True,
+    type=click.Choice(
+        ["AUTO_FOR_SALES", "LEGACY_FOR_SALES", "MANUAL"],
+        case_sensitive=False,
+    ),
+    help="Dynamic bidding strategy.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
+@click.pass_context
+def campaigns_edit_bidding_strategy(
+    ctx: click.Context,
+    marketplace: str | None,
+    campaign_id: str,
+    strategy: str,
+    dry_run: bool,
+) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_campaign_bidding_strategy_payload(
+        campaign_id=campaign_id,
+        strategy=strategy,
+    )
+    request_payload = {"campaigns": [payload]}
+    if dry_run:
+        emit_dry_run(
+            ctx,
+            target_marketplace,
+            request_payload,
+            "campaigns.edit-bidding-strategy",
+        )
+        return
+
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "campaigns",
+                health,
+                "campaigns",
+                {
+                    "marketplace": target_marketplace,
+                    "campaignId": campaign_id,
+                    "strategy": strategy,
+                    "payload": request_payload,
+                },
+            ),
+            ctx.obj["json"],
+        )
+        return
+    result = client.edit_campaign(access_token, profile_id, payload)
+    emit(
+        {
+            "meta": {
+                "mode": "live",
+                "status": "connected",
+                "profileId": profile_id,
+                "marketplace": target_marketplace,
+            },
+            "data": {"result": result, "payload": request_payload},
         },
         ctx.obj["json"],
     )
@@ -892,6 +1035,76 @@ def ad_groups_set_state(
     )
 
 
+@ad_groups.command("edit-bid")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--campaign-id", required=True, help="Campaign id.")
+@click.option("--ad-group-id", required=True, help="Ad group id.")
+@click.option("--default-bid", required=True, type=float, help="New ad group default CPC bid.")
+@click.option(
+    "--state",
+    default=None,
+    type=click.Choice(["ENABLED", "PAUSED", "ARCHIVED"], case_sensitive=False),
+    help="Optional state to include if Amazon requires a full update.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
+@click.pass_context
+def ad_groups_edit_bid(
+    ctx: click.Context,
+    marketplace: str | None,
+    campaign_id: str,
+    ad_group_id: str,
+    default_bid: float,
+    state: str | None,
+    dry_run: bool,
+) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_ad_group_bid_payload(
+        campaign_id=campaign_id,
+        ad_group_id=ad_group_id,
+        default_bid=default_bid,
+        state=state,
+    )
+    request_payload = {"adGroups": [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "ad-groups.edit-bid")
+        return
+
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "ad-groups",
+                health,
+                "adGroups",
+                {
+                    "marketplace": target_marketplace,
+                    "campaignId": campaign_id,
+                    "adGroupId": ad_group_id,
+                    "defaultBid": default_bid,
+                    "payload": request_payload,
+                },
+            ),
+            ctx.obj["json"],
+        )
+        return
+    result = client.edit_ad_group(access_token, profile_id, payload)
+    emit(
+        {
+            "meta": {
+                "mode": "live",
+                "status": "connected",
+                "profileId": profile_id,
+                "marketplace": target_marketplace,
+            },
+            "data": {"result": result, "payload": request_payload},
+        },
+        ctx.obj["json"],
+    )
+
+
 @cli.group()
 def keywords() -> None:
     """Sponsored Products keyword commands."""
@@ -1028,6 +1241,13 @@ def keywords_add(
 @click.option("--ad-group-id", required=True, help="Ad group id.")
 @click.option("--keyword-id", required=True, help="Keyword id.")
 @click.option("--bid", required=True, type=float, help="New CPC bid.")
+@click.option(
+    "--state",
+    default=None,
+    type=click.Choice(["ENABLED", "PAUSED", "ARCHIVED"], case_sensitive=False),
+    help="Optional state to include if Amazon requires a full update.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
 @click.pass_context
 def keywords_edit_bid(
     ctx: click.Context,
@@ -1036,7 +1256,23 @@ def keywords_edit_bid(
     ad_group_id: str,
     keyword_id: str,
     bid: float,
+    state: str | None,
+    dry_run: bool,
 ) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_keyword_edit_payload(
+        campaign_id=campaign_id,
+        ad_group_id=ad_group_id,
+        keyword_id=keyword_id,
+        bid=bid,
+        state=state,
+    )
+    request_payload = {"keywords": [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "keywords.edit-bid")
+        return
+
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
         marketplace
     )
@@ -1052,17 +1288,12 @@ def keywords_edit_bid(
                     "adGroupId": ad_group_id,
                     "keywordId": keyword_id,
                     "bid": bid,
+                    "payload": request_payload,
                 },
             ),
             ctx.obj["json"],
         )
         return
-    payload = build_keyword_edit_payload(
-        campaign_id=campaign_id,
-        ad_group_id=ad_group_id,
-        keyword_id=keyword_id,
-        bid=bid,
-    )
     result = client.edit_keyword(access_token, profile_id, payload)
     emit(
         {
@@ -1072,7 +1303,7 @@ def keywords_edit_bid(
                 "profileId": profile_id,
                 "marketplace": target_marketplace,
             },
-            "data": {"result": result},
+            "data": {"result": result, "payload": request_payload},
         },
         ctx.obj["json"],
     )
@@ -1084,6 +1315,7 @@ def keywords_edit_bid(
 @click.option("--ad-group-id", required=True, help="Ad group id.")
 @click.option("--keyword-id", required=True, help="Keyword id.")
 @click.option("--state", required=True, help="ENABLED, PAUSED, or ARCHIVED.")
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
 @click.pass_context
 def keywords_set_state(
     ctx: click.Context,
@@ -1092,7 +1324,21 @@ def keywords_set_state(
     ad_group_id: str,
     keyword_id: str,
     state: str,
+    dry_run: bool,
 ) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_keyword_state_payload(
+        campaign_id=campaign_id,
+        ad_group_id=ad_group_id,
+        keyword_id=keyword_id,
+        state=state,
+    )
+    request_payload = {"keywords": [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "keywords.set-state")
+        return
+
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
         marketplace
     )
@@ -1108,17 +1354,12 @@ def keywords_set_state(
                     "adGroupId": ad_group_id,
                     "keywordId": keyword_id,
                     "state": state,
+                    "payload": request_payload,
                 },
             ),
             ctx.obj["json"],
         )
         return
-    payload = build_keyword_state_payload(
-        campaign_id=campaign_id,
-        ad_group_id=ad_group_id,
-        keyword_id=keyword_id,
-        state=state,
-    )
     result = client.edit_keyword(access_token, profile_id, payload)
     emit(
         {
@@ -1128,7 +1369,7 @@ def keywords_set_state(
                 "profileId": profile_id,
                 "marketplace": target_marketplace,
             },
-            "data": {"result": result},
+            "data": {"result": result, "payload": request_payload},
         },
         ctx.obj["json"],
     )
@@ -1392,6 +1633,12 @@ def targets_list(
 @click.option("--asin", required=True, help="Target ASIN.")
 @click.option("--bid", type=float, default=None, help="Optional target CPC bid.")
 @click.option(
+    "--expression-type",
+    default="MANUAL",
+    type=click.Choice(["MANUAL", "AUTO"], case_sensitive=False),
+    help="Targeting expression type.",
+)
+@click.option(
     "--state",
     default="ENABLED",
     type=click.Choice(["ENABLED", "PAUSED", "ARCHIVED"], case_sensitive=False),
@@ -1406,6 +1653,7 @@ def targets_add_asin(
     ad_group_id: str,
     asin: str,
     bid: float | None,
+    expression_type: str,
     state: str,
     dry_run: bool,
 ) -> None:
@@ -1417,6 +1665,7 @@ def targets_add_asin(
         asin=asin,
         bid=bid,
         state=state,
+        expression_type=expression_type,
     )
     request_payload = {"targetingClauses": [payload]}
     if dry_run:
@@ -1438,6 +1687,240 @@ def targets_add_asin(
         )
         return
     result = client.create_target(access_token, profile_id, payload)
+    emit(
+        {
+            "meta": {
+                "mode": "live",
+                "status": "connected",
+                "profileId": profile_id,
+                "marketplace": target_marketplace,
+            },
+            "data": {"result": result, "payload": request_payload},
+        },
+        ctx.obj["json"],
+    )
+
+
+@targets.command("add-category")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--campaign-id", required=True, help="Campaign id.")
+@click.option("--ad-group-id", required=True, help="Ad group id.")
+@click.option("--category-id", required=True, help="Amazon category id.")
+@click.option("--bid", type=float, default=None, help="Optional target CPC bid.")
+@click.option(
+    "--expression-type",
+    default="MANUAL",
+    type=click.Choice(["MANUAL", "AUTO"], case_sensitive=False),
+    help="Targeting expression type.",
+)
+@click.option(
+    "--state",
+    default="ENABLED",
+    type=click.Choice(["ENABLED", "PAUSED", "ARCHIVED"], case_sensitive=False),
+    help="Initial target state.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
+@click.pass_context
+def targets_add_category(
+    ctx: click.Context,
+    marketplace: str | None,
+    campaign_id: str,
+    ad_group_id: str,
+    category_id: str,
+    bid: float | None,
+    expression_type: str,
+    state: str,
+    dry_run: bool,
+) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_category_target_create_payload(
+        campaign_id=campaign_id,
+        ad_group_id=ad_group_id,
+        category_id=category_id,
+        bid=bid,
+        state=state,
+        expression_type=expression_type,
+    )
+    request_payload = {"targetingClauses": [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "targets.add-category")
+        return
+
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "targets",
+                health,
+                "targets",
+                {"marketplace": target_marketplace, "payload": request_payload},
+            ),
+            ctx.obj["json"],
+        )
+        return
+    result = client.create_target(access_token, profile_id, payload)
+    emit(
+        {
+            "meta": {
+                "mode": "live",
+                "status": "connected",
+                "profileId": profile_id,
+                "marketplace": target_marketplace,
+            },
+            "data": {"result": result, "payload": request_payload},
+        },
+        ctx.obj["json"],
+    )
+
+
+@targets.command("add-expression")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--campaign-id", required=True, help="Campaign id.")
+@click.option("--ad-group-id", required=True, help="Ad group id.")
+@click.option("--asin", default=None, help="Shortcut predicate ASIN_SAME_AS=<asin>.")
+@click.option("--category-id", default=None, help="Shortcut predicate CATEGORY_SAME_AS=<category_id>.")
+@click.option(
+    "--predicate",
+    multiple=True,
+    help="Additional predicate as TYPE=VALUE, TYPE:VALUE, or TYPE. Repeat as needed.",
+)
+@click.option("--bid", type=float, default=None, help="Optional target CPC bid.")
+@click.option(
+    "--expression-type",
+    default="MANUAL",
+    type=click.Choice(["MANUAL", "AUTO"], case_sensitive=False),
+    help="Targeting expression type.",
+)
+@click.option(
+    "--state",
+    default="ENABLED",
+    type=click.Choice(["ENABLED", "PAUSED", "ARCHIVED"], case_sensitive=False),
+    help="Initial target state.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
+@click.pass_context
+def targets_add_expression(
+    ctx: click.Context,
+    marketplace: str | None,
+    campaign_id: str,
+    ad_group_id: str,
+    asin: str | None,
+    category_id: str | None,
+    predicate: tuple[str, ...],
+    bid: float | None,
+    expression_type: str,
+    state: str,
+    dry_run: bool,
+) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    predicates = parse_predicate_options(predicate, asin=asin, category_id=category_id)
+    try:
+        payload = build_expression_target_create_payload(
+            campaign_id=campaign_id,
+            ad_group_id=ad_group_id,
+            predicates=predicates,
+            bid=bid,
+            state=state,
+            expression_type=expression_type,
+        )
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+    request_payload = {"targetingClauses": [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "targets.add-expression")
+        return
+
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "targets",
+                health,
+                "targets",
+                {"marketplace": target_marketplace, "payload": request_payload},
+            ),
+            ctx.obj["json"],
+        )
+        return
+    result = client.create_target(access_token, profile_id, payload)
+    emit(
+        {
+            "meta": {
+                "mode": "live",
+                "status": "connected",
+                "profileId": profile_id,
+                "marketplace": target_marketplace,
+            },
+            "data": {"result": result, "payload": request_payload},
+        },
+        ctx.obj["json"],
+    )
+
+
+@targets.command("edit-bid")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--target-id", required=True, help="Target id.")
+@click.option("--campaign-id", default=None, help="Optional campaign id.")
+@click.option("--ad-group-id", default=None, help="Optional ad group id.")
+@click.option("--bid", required=True, type=float, help="New target CPC bid.")
+@click.option(
+    "--state",
+    default=None,
+    type=click.Choice(["ENABLED", "PAUSED", "ARCHIVED"], case_sensitive=False),
+    help="Optional state to include if Amazon requires a full update.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
+@click.pass_context
+def targets_edit_bid(
+    ctx: click.Context,
+    marketplace: str | None,
+    target_id: str,
+    campaign_id: str | None,
+    ad_group_id: str | None,
+    bid: float,
+    state: str | None,
+    dry_run: bool,
+) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_target_bid_payload(
+        target_id=target_id,
+        bid=bid,
+        campaign_id=campaign_id,
+        ad_group_id=ad_group_id,
+        state=state,
+    )
+    request_payload = {"targetingClauses": [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "targets.edit-bid")
+        return
+
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "targets",
+                health,
+                "targets",
+                {
+                    "marketplace": target_marketplace,
+                    "targetId": target_id,
+                    "bid": bid,
+                    "payload": request_payload,
+                },
+            ),
+            ctx.obj["json"],
+        )
+        return
+    result = client.edit_target(access_token, profile_id, payload)
     emit(
         {
             "meta": {
@@ -1596,6 +2079,7 @@ def negatives_list(
 @click.option("--ad-group-id", required=True, help="Ad group id.")
 @click.option("--keyword-text", required=True, help="Negative keyword text.")
 @click.option("--match-type", required=True, help="NEGATIVE_EXACT or NEGATIVE_PHRASE.")
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
 @click.pass_context
 def negatives_add_ad_group(
     ctx: click.Context,
@@ -1604,7 +2088,21 @@ def negatives_add_ad_group(
     ad_group_id: str,
     keyword_text: str,
     match_type: str,
+    dry_run: bool,
 ) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_ad_group_negative_payload(
+        campaign_id=campaign_id,
+        ad_group_id=ad_group_id,
+        keyword_text=keyword_text,
+        match_type=match_type,
+    )
+    request_payload = {"negativeKeywords": [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "negatives.add-ad-group")
+        return
+
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
         marketplace
     )
@@ -1620,17 +2118,12 @@ def negatives_add_ad_group(
                     "adGroupId": ad_group_id,
                     "keywordText": keyword_text,
                     "matchType": match_type,
+                    "payload": request_payload,
                 },
             ),
             ctx.obj["json"],
         )
         return
-    payload = build_ad_group_negative_payload(
-        campaign_id=campaign_id,
-        ad_group_id=ad_group_id,
-        keyword_text=keyword_text,
-        match_type=match_type,
-    )
     result = client.create_negative_keyword(access_token, profile_id, payload)
     emit(
         {
@@ -1640,7 +2133,7 @@ def negatives_add_ad_group(
                 "profileId": profile_id,
                 "marketplace": target_marketplace,
             },
-            "data": {"result": result},
+            "data": {"result": result, "payload": request_payload},
         },
         ctx.obj["json"],
     )
@@ -1651,6 +2144,7 @@ def negatives_add_ad_group(
 @click.option("--campaign-id", required=True, help="Campaign id.")
 @click.option("--keyword-text", required=True, help="Negative keyword text.")
 @click.option("--match-type", required=True, help="NEGATIVE_EXACT or NEGATIVE_PHRASE.")
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
 @click.pass_context
 def negatives_add_campaign(
     ctx: click.Context,
@@ -1658,7 +2152,20 @@ def negatives_add_campaign(
     campaign_id: str,
     keyword_text: str,
     match_type: str,
+    dry_run: bool,
 ) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_campaign_negative_payload(
+        campaign_id=campaign_id,
+        keyword_text=keyword_text,
+        match_type=match_type,
+    )
+    request_payload = {"campaignNegativeKeywords": [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "negatives.add-campaign")
+        return
+
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
         marketplace
     )
@@ -1673,16 +2180,12 @@ def negatives_add_campaign(
                     "campaignId": campaign_id,
                     "keywordText": keyword_text,
                     "matchType": match_type,
+                    "payload": request_payload,
                 },
             ),
             ctx.obj["json"],
         )
         return
-    payload = build_campaign_negative_payload(
-        campaign_id=campaign_id,
-        keyword_text=keyword_text,
-        match_type=match_type,
-    )
     result = client.create_campaign_negative_keyword(access_token, profile_id, payload)
     emit(
         {
@@ -1692,7 +2195,7 @@ def negatives_add_campaign(
                 "profileId": profile_id,
                 "marketplace": target_marketplace,
             },
-            "data": {"result": result},
+            "data": {"result": result, "payload": request_payload},
         },
         ctx.obj["json"],
     )
@@ -1703,6 +2206,7 @@ def negatives_add_campaign(
 @click.option("--negative-keyword-id", required=True, help="Negative keyword id.")
 @click.option("--scope", type=click.Choice(["adGroup", "campaign"]), required=True)
 @click.option("--state", required=True, help="ENABLED, PAUSED, or PROPOSED.")
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
 @click.pass_context
 def negatives_set_state(
     ctx: click.Context,
@@ -1710,7 +2214,20 @@ def negatives_set_state(
     negative_keyword_id: str,
     scope: str,
     state: str,
+    dry_run: bool,
 ) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_negative_state_payload(
+        keyword_id=negative_keyword_id,
+        state=state,
+    )
+    payload_key = "campaignNegativeKeywords" if scope == "campaign" else "negativeKeywords"
+    request_payload = {payload_key: [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "negatives.set-state")
+        return
+
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
         marketplace
     )
@@ -1725,15 +2242,12 @@ def negatives_set_state(
                     "negativeKeywordId": negative_keyword_id,
                     "scope": scope,
                     "state": state,
+                    "payload": request_payload,
                 },
             ),
             ctx.obj["json"],
         )
         return
-    payload = build_negative_state_payload(
-        keyword_id=negative_keyword_id,
-        state=state,
-    )
     if scope == "campaign":
         result = client.edit_campaign_negative_keyword(access_token, profile_id, payload)
     else:
@@ -1746,7 +2260,430 @@ def negatives_set_state(
                 "profileId": profile_id,
                 "marketplace": target_marketplace,
             },
-            "data": {"result": result},
+            "data": {"result": result, "payload": request_payload},
+        },
+        ctx.obj["json"],
+    )
+
+
+@cli.group("negative-targets")
+def negative_targets() -> None:
+    """Sponsored Products negative product targeting commands."""
+
+
+@negative_targets.command("list")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--campaign-id", default=None, help="Optional campaign id filter.")
+@click.option("--ad-group-id", default=None, help="Optional ad group id filter.")
+@click.option("--negative-target-id", default=None, help="Optional negative target id filter.")
+@click.option("--scope", type=click.Choice(["adGroup", "campaign", "both"]), default="both")
+@click.option("--state", "state_filter", default="ENABLED", help="Negative target state filter.")
+@click.pass_context
+def negative_targets_list(
+    ctx: click.Context,
+    marketplace: str | None,
+    campaign_id: str | None,
+    ad_group_id: str | None,
+    negative_target_id: str | None,
+    scope: str,
+    state_filter: str,
+) -> None:
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "negative-targets",
+                health,
+                "negativeTargets",
+                {
+                    "marketplace": target_marketplace,
+                    "campaignId": campaign_id,
+                    "adGroupId": ad_group_id,
+                    "negativeTargetId": negative_target_id,
+                    "scope": scope,
+                    "state": state_filter,
+                },
+            ),
+            ctx.obj["json"],
+        )
+        return
+    payload = build_negative_targets_filter(
+        campaign_id=campaign_id,
+        ad_group_id=ad_group_id,
+        target_id=negative_target_id,
+        state_filter=state_filter,
+    )
+    rows = []
+    if scope in {"adGroup", "both"}:
+        rows.extend(
+            normalize_negative_target_row(item, "adGroup")
+            for item in client.list_negative_targets(access_token, profile_id, payload)
+        )
+    if scope in {"campaign", "both"}:
+        rows.extend(
+            normalize_negative_target_row(item, "campaign")
+            for item in client.list_campaign_negative_targets(
+                access_token,
+                profile_id,
+                payload,
+            )
+        )
+    emit(
+        {
+            "meta": {
+                "mode": "live",
+                "status": "connected",
+                "profileId": profile_id,
+                "marketplace": target_marketplace,
+            },
+            "data": {"negativeTargets": rows},
+        },
+        ctx.obj["json"],
+    )
+
+
+@negative_targets.command("add-ad-group")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--campaign-id", required=True, help="Campaign id.")
+@click.option("--ad-group-id", required=True, help="Ad group id.")
+@click.option("--asin", default=None, help="Shortcut predicate ASIN_SAME_AS=<asin>.")
+@click.option("--category-id", default=None, help="Shortcut predicate CATEGORY_SAME_AS=<category_id>.")
+@click.option(
+    "--predicate",
+    multiple=True,
+    help="Additional predicate as TYPE=VALUE, TYPE:VALUE, or TYPE. Repeat as needed.",
+)
+@click.option(
+    "--expression-type",
+    default="MANUAL",
+    type=click.Choice(["MANUAL", "AUTO"], case_sensitive=False),
+    help="Targeting expression type.",
+)
+@click.option(
+    "--state",
+    default="ENABLED",
+    type=click.Choice(["ENABLED", "PAUSED", "ARCHIVED"], case_sensitive=False),
+    help="Initial negative target state.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
+@click.pass_context
+def negative_targets_add_ad_group(
+    ctx: click.Context,
+    marketplace: str | None,
+    campaign_id: str,
+    ad_group_id: str,
+    asin: str | None,
+    category_id: str | None,
+    predicate: tuple[str, ...],
+    expression_type: str,
+    state: str,
+    dry_run: bool,
+) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    predicates = parse_predicate_options(predicate, asin=asin, category_id=category_id)
+    try:
+        payload = build_negative_target_payload(
+            campaign_id=campaign_id,
+            ad_group_id=ad_group_id,
+            predicates=predicates,
+            state=state,
+            expression_type=expression_type,
+        )
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+    request_payload = {"negativeTargetingClauses": [payload]}
+    if dry_run:
+        emit_dry_run(
+            ctx,
+            target_marketplace,
+            request_payload,
+            "negative-targets.add-ad-group",
+        )
+        return
+
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "negative-targets",
+                health,
+                "negativeTargets",
+                {"marketplace": target_marketplace, "payload": request_payload},
+            ),
+            ctx.obj["json"],
+        )
+        return
+    result = client.create_negative_target(access_token, profile_id, payload)
+    emit(
+        {
+            "meta": {
+                "mode": "live",
+                "status": "connected",
+                "profileId": profile_id,
+                "marketplace": target_marketplace,
+            },
+            "data": {"result": result, "payload": request_payload},
+        },
+        ctx.obj["json"],
+    )
+
+
+@negative_targets.command("add-campaign")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--campaign-id", required=True, help="Campaign id.")
+@click.option("--asin", default=None, help="Shortcut predicate ASIN_SAME_AS=<asin>.")
+@click.option("--category-id", default=None, help="Shortcut predicate CATEGORY_SAME_AS=<category_id>.")
+@click.option(
+    "--predicate",
+    multiple=True,
+    help="Additional predicate as TYPE=VALUE, TYPE:VALUE, or TYPE. Repeat as needed.",
+)
+@click.option(
+    "--state",
+    default="ENABLED",
+    type=click.Choice(["ENABLED", "PAUSED", "ARCHIVED"], case_sensitive=False),
+    help="Initial negative target state.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
+@click.pass_context
+def negative_targets_add_campaign(
+    ctx: click.Context,
+    marketplace: str | None,
+    campaign_id: str,
+    asin: str | None,
+    category_id: str | None,
+    predicate: tuple[str, ...],
+    state: str,
+    dry_run: bool,
+) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    predicates = parse_predicate_options(predicate, asin=asin, category_id=category_id)
+    try:
+        payload = build_negative_target_payload(
+            campaign_id=campaign_id,
+            predicates=predicates,
+            state=state,
+        )
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+    request_payload = {"campaignNegativeTargetingClauses": [payload]}
+    if dry_run:
+        emit_dry_run(
+            ctx,
+            target_marketplace,
+            request_payload,
+            "negative-targets.add-campaign",
+        )
+        return
+
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "negative-targets",
+                health,
+                "negativeTargets",
+                {"marketplace": target_marketplace, "payload": request_payload},
+            ),
+            ctx.obj["json"],
+        )
+        return
+    result = client.create_campaign_negative_target(access_token, profile_id, payload)
+    emit(
+        {
+            "meta": {
+                "mode": "live",
+                "status": "connected",
+                "profileId": profile_id,
+                "marketplace": target_marketplace,
+            },
+            "data": {"result": result, "payload": request_payload},
+        },
+        ctx.obj["json"],
+    )
+
+
+@negative_targets.command("set-state")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--negative-target-id", required=True, help="Negative target id.")
+@click.option("--scope", type=click.Choice(["adGroup", "campaign"]), required=True)
+@click.option("--campaign-id", default=None, help="Optional campaign id.")
+@click.option("--ad-group-id", default=None, help="Optional ad group id.")
+@click.option(
+    "--state",
+    required=True,
+    type=click.Choice(["ENABLED", "PAUSED", "ARCHIVED"], case_sensitive=False),
+    help="ENABLED, PAUSED, or ARCHIVED.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
+@click.pass_context
+def negative_targets_set_state(
+    ctx: click.Context,
+    marketplace: str | None,
+    negative_target_id: str,
+    scope: str,
+    campaign_id: str | None,
+    ad_group_id: str | None,
+    state: str,
+    dry_run: bool,
+) -> None:
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    payload = build_negative_target_state_payload(
+        target_id=negative_target_id,
+        state=state,
+        campaign_id=campaign_id,
+        ad_group_id=ad_group_id,
+    )
+    payload_key = (
+        "campaignNegativeTargetingClauses"
+        if scope == "campaign"
+        else "negativeTargetingClauses"
+    )
+    request_payload = {payload_key: [payload]}
+    if dry_run:
+        emit_dry_run(ctx, target_marketplace, request_payload, "negative-targets.set-state")
+        return
+
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "negative-targets",
+                health,
+                "negativeTargets",
+                {
+                    "marketplace": target_marketplace,
+                    "negativeTargetId": negative_target_id,
+                    "scope": scope,
+                    "state": state,
+                    "payload": request_payload,
+                },
+            ),
+            ctx.obj["json"],
+        )
+        return
+    if scope == "campaign":
+        result = client.edit_campaign_negative_target(access_token, profile_id, payload)
+    else:
+        result = client.edit_negative_target(access_token, profile_id, payload)
+    emit(
+        {
+            "meta": {
+                "mode": "live",
+                "status": "connected",
+                "profileId": profile_id,
+                "marketplace": target_marketplace,
+            },
+            "data": {"result": result, "payload": request_payload},
+        },
+        ctx.obj["json"],
+    )
+
+
+@cli.group("sp-raw")
+def sp_raw() -> None:
+    """Restricted raw Sponsored Products API requests."""
+
+
+@sp_raw.command("request")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option(
+    "--method",
+    required=True,
+    type=click.Choice(["GET", "POST", "PUT", "DELETE"], case_sensitive=False),
+    help="HTTP method.",
+)
+@click.option("--path", required=True, help="Sponsored Products path, must start with /sp/.")
+@click.option("--payload-json", default=None, help="Optional JSON object/array request body.")
+@click.option("--accept", default=None, help="Optional explicit Accept media type.")
+@click.option("--content-type", default=None, help="Optional explicit Content-Type media type.")
+@click.option("--dry-run", is_flag=True, help="Print the request payload without submitting.")
+@click.option(
+    "--confirm-submit",
+    is_flag=True,
+    help="Required for live raw requests because raw endpoints bypass typed CLI validation.",
+)
+@click.pass_context
+def sp_raw_request(
+    ctx: click.Context,
+    marketplace: str | None,
+    method: str,
+    path: str,
+    payload_json: str | None,
+    accept: str | None,
+    content_type: str | None,
+    dry_run: bool,
+    confirm_submit: bool,
+) -> None:
+    if not path.startswith("/sp/"):
+        raise click.BadParameter("Raw SP request path must start with /sp/.")
+    payload = parse_json_payload(payload_json)
+    env = load_ads_environment()
+    target_marketplace = (marketplace or env.marketplace or "US").upper()
+    request_payload = {
+        "method": method.upper(),
+        "path": path,
+        "payload": payload,
+        "accept": accept,
+        "contentType": content_type,
+    }
+    if dry_run:
+        emit_dry_run(
+            ctx,
+            target_marketplace,
+            request_payload,
+            "sp-raw.request",
+            policy="restricted_to_sp_paths_user_supplied_payload_only",
+        )
+        return
+    if not confirm_submit:
+        raise click.UsageError(
+            "Live raw SP requests require --confirm-submit. Run --dry-run first."
+        )
+
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "sp-raw",
+                health,
+                "result",
+                {"marketplace": target_marketplace, **request_payload},
+            ),
+            ctx.obj["json"],
+        )
+        return
+    result = client.send_sp_raw(
+        access_token=access_token,
+        profile_id=profile_id,
+        method=method,
+        path=path,
+        payload=payload,
+        accept=accept,
+        content_type=content_type,
+    )
+    emit(
+        {
+            "meta": {
+                "mode": "live",
+                "status": "connected",
+                "profileId": profile_id,
+                "marketplace": target_marketplace,
+            },
+            "data": {"result": result, "request": request_payload},
         },
         ctx.obj["json"],
     )
@@ -2118,7 +3055,7 @@ def repl(as_json: bool) -> None:
                 skin.print_goodbye()
             break
         if line == "help":
-            help_text = "可用命令: auth health | profiles list | profiles resolve --marketplace US | portfolios list/create/set-state | campaigns list/create/set-state/edit-budget/edit-placement-bids | ad-groups list/create/set-state | keywords list/add/edit-bid/set-state | product-ads list/add/set-state | targets list/add-asin/set-state | negatives list/add-ad-group/add-campaign/set-state | reports create-sp-keywords/create-sp-campaign-placement/create-search-terms/status/download/parse-search-terms/parse-sp-keywords/parse-sp-campaign-placement | snapshot"
+            help_text = "可用命令: auth health | profiles list | profiles resolve --marketplace US | portfolios list/create/set-state | campaigns list/create/set-state/edit-budget/edit-bidding-strategy/edit-placement-bids | ad-groups list/create/set-state/edit-bid | keywords list/add/edit-bid/set-state | product-ads list/add/set-state | targets list/add-asin/add-category/add-expression/edit-bid/set-state | negatives list/add-ad-group/add-campaign/set-state | negative-targets list/add-ad-group/add-campaign/set-state | sp-raw request | reports create-sp-keywords/create-sp-campaign-placement/create-search-terms/status/download/parse-search-terms/parse-sp-keywords/parse-sp-campaign-placement | snapshot"
             if skin:
                 skin.info(help_text)
             else:

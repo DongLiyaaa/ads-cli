@@ -12,6 +12,7 @@ if HARNESS_ROOT not in sys.path:
 from cli_anything.amazon_ads_ops_workbench.core.env import AdsEnvironment, normalize_region
 from cli_anything.amazon_ads_ops_workbench.core.client import AmazonAdsClient
 from cli_anything.amazon_ads_ops_workbench.core.campaigns import (
+    build_campaign_bidding_strategy_payload,
     build_campaign_budget_payload,
     build_campaign_create_payload,
     build_campaign_placement_bid_payload,
@@ -21,25 +22,33 @@ from cli_anything.amazon_ads_ops_workbench.core.campaigns import (
 )
 from cli_anything.amazon_ads_ops_workbench.core.keywords import (
     build_ad_groups_filter,
+    build_ad_group_bid_payload,
     build_ad_group_create_payload,
     build_ad_group_negative_payload,
     build_ad_group_state_payload,
     build_asin_target_create_payload,
     build_campaign_negative_payload,
+    build_category_target_create_payload,
+    build_expression_target_create_payload,
     build_keyword_create_payload,
     build_keyword_edit_payload,
     build_keyword_state_payload,
     build_keywords_filter,
     build_negative_list_filter,
     build_negative_state_payload,
+    build_negative_target_payload,
+    build_negative_target_state_payload,
+    build_negative_targets_filter,
     build_product_ad_create_payload,
     build_product_ad_state_payload,
     build_product_ads_filter,
+    build_target_bid_payload,
     build_target_state_payload,
     build_targets_filter,
     normalize_ad_group_row,
     normalize_keyword_row,
     normalize_negative_row,
+    normalize_negative_target_row,
     normalize_portfolio_row,
     normalize_product_ad_row,
     normalize_target_row,
@@ -114,7 +123,34 @@ class EnvTests(unittest.TestCase):
             client._content_media_type("/sp/targets"),
             "application/vnd.sptargetingclause.v3+json",
         )
+        self.assertEqual(
+            client._content_media_type("/sp/negativeTargets"),
+            "application/vnd.spnegativetargetingclause.v3+json",
+        )
+        self.assertEqual(
+            client._content_media_type("/sp/campaignNegativeTargets"),
+            "application/vnd.spcampaignnegativetargetingclause.v3+json",
+        )
         self.assertEqual(client._content_media_type("/reporting/reports"), "application/json")
+
+    def test_send_sp_raw_rejects_non_sp_paths_before_network(self):
+        env = AdsEnvironment(
+            client_id="client",
+            client_secret="secret",
+            refresh_token="refresh",
+            profile_id="123",
+            region="NA",
+            marketplace="US",
+        )
+        client = AmazonAdsClient(env)
+        with self.assertRaises(ValueError):
+            client.send_sp_raw(
+                access_token="token",
+                profile_id="123",
+                method="POST",
+                path="/sd/campaigns/list",
+                payload={},
+            )
 
 
 class ProfileResolutionTests(unittest.TestCase):
@@ -188,6 +224,18 @@ class KeywordNormalizationTests(unittest.TestCase):
         self.assertEqual(payload["adGroupIdFilter"], {"include": ["456"]})
         self.assertEqual(payload["stateFilter"], {"include": ["PAUSED"]})
 
+    def test_build_negative_targets_filter_includes_optional_filters(self):
+        payload = build_negative_targets_filter(
+            campaign_id="123",
+            ad_group_id="456",
+            target_id="789",
+            state_filter="ARCHIVED",
+        )
+        self.assertEqual(payload["campaignIdFilter"], {"include": ["123"]})
+        self.assertEqual(payload["adGroupIdFilter"], {"include": ["456"]})
+        self.assertEqual(payload["targetIdFilter"], {"include": ["789"]})
+        self.assertEqual(payload["stateFilter"], {"include": ["ARCHIVED"]})
+
     def test_build_ad_groups_filter_includes_optional_filters(self):
         payload = build_ad_groups_filter(
             campaign_id="123",
@@ -243,6 +291,17 @@ class KeywordNormalizationTests(unittest.TestCase):
         self.assertEqual(payload["campaignId"], "1")
         self.assertEqual(payload["adGroupId"], "2")
         self.assertEqual(payload["state"], "ARCHIVED")
+
+    def test_build_ad_group_bid_payload_does_not_force_state(self):
+        payload = build_ad_group_bid_payload(
+            campaign_id="1",
+            ad_group_id="2",
+            default_bid=0.81,
+        )
+        self.assertEqual(payload["campaignId"], "1")
+        self.assertEqual(payload["adGroupId"], "2")
+        self.assertEqual(payload["defaultBid"], 0.81)
+        self.assertNotIn("state", payload)
 
     def test_build_keyword_create_payload_uses_expected_fields(self):
         payload = build_keyword_create_payload(
@@ -301,6 +360,41 @@ class KeywordNormalizationTests(unittest.TestCase):
         self.assertEqual(payload["expression"], [{"type": "ASIN_SAME_AS", "value": "B000000001"}])
         self.assertEqual(payload["bid"], 0.88)
 
+    def test_build_category_target_create_payload_uses_expected_fields(self):
+        payload = build_category_target_create_payload(
+            campaign_id="1",
+            ad_group_id="2",
+            category_id="123456",
+            bid=0.67,
+        )
+        self.assertEqual(
+            payload["expression"],
+            [{"type": "CATEGORY_SAME_AS", "value": "123456"}],
+        )
+        self.assertEqual(payload["bid"], 0.67)
+
+    def test_build_expression_target_create_payload_allows_multiple_predicates(self):
+        payload = build_expression_target_create_payload(
+            campaign_id="1",
+            ad_group_id="2",
+            predicates=[
+                {"type": "CATEGORY_SAME_AS", "value": "123456"},
+                {"type": "BRAND_SAME_AS", "value": "Brand"},
+            ],
+            bid=0.73,
+        )
+        self.assertEqual(len(payload["expression"]), 2)
+        self.assertEqual(payload["expression"][1]["type"], "BRAND_SAME_AS")
+        self.assertEqual(payload["bid"], 0.73)
+
+    def test_build_expression_target_create_payload_requires_predicate(self):
+        with self.assertRaises(ValueError):
+            build_expression_target_create_payload(
+                campaign_id="1",
+                ad_group_id="2",
+                predicates=[],
+            )
+
     def test_build_target_state_payload_uses_expected_fields(self):
         payload = build_target_state_payload(
             target_id="9",
@@ -314,6 +408,19 @@ class KeywordNormalizationTests(unittest.TestCase):
         self.assertEqual(payload["adGroupId"], "2")
         self.assertEqual(payload["state"], "ARCHIVED")
         self.assertEqual(payload["bid"], 0.77)
+
+    def test_build_target_bid_payload_does_not_force_state(self):
+        payload = build_target_bid_payload(
+            target_id="9",
+            campaign_id="1",
+            ad_group_id="2",
+            bid=0.79,
+        )
+        self.assertEqual(payload["targetId"], "9")
+        self.assertEqual(payload["campaignId"], "1")
+        self.assertEqual(payload["adGroupId"], "2")
+        self.assertEqual(payload["bid"], 0.79)
+        self.assertNotIn("state", payload)
 
     def test_normalize_keyword_row_keeps_bid_and_match_type(self):
         row = normalize_keyword_row(
@@ -346,6 +453,22 @@ class KeywordNormalizationTests(unittest.TestCase):
         )
         self.assertEqual(row["scope"], "adGroup")
         self.assertEqual(row["keywordText"], "usb c camera")
+
+    def test_normalize_negative_target_row_marks_scope(self):
+        row = normalize_negative_target_row(
+            {
+                "negativeTargetingClauseId": 88,
+                "campaignId": 1,
+                "adGroupId": 2,
+                "expressionType": "MANUAL",
+                "expression": [{"type": "ASIN_SAME_AS", "value": "B000000001"}],
+                "state": "ENABLED",
+            },
+            scope="adGroup",
+        )
+        self.assertEqual(row["negativeTargetId"], "88")
+        self.assertEqual(row["scope"], "adGroup")
+        self.assertEqual(row["expression"][0]["value"], "B000000001")
 
     def test_normalize_ad_group_row_keeps_default_bid(self):
         row = normalize_ad_group_row(
@@ -469,6 +592,43 @@ class KeywordNormalizationTests(unittest.TestCase):
         self.assertEqual(payload["keywordId"], "3")
         self.assertEqual(payload["state"], "PAUSED")
 
+    def test_build_negative_target_payload_uses_scope_specific_fields(self):
+        ad_group_payload = build_negative_target_payload(
+            campaign_id="1",
+            ad_group_id="2",
+            predicates=[{"type": "ASIN_SAME_AS", "value": "B000000001"}],
+        )
+        self.assertEqual(ad_group_payload["campaignId"], "1")
+        self.assertEqual(ad_group_payload["adGroupId"], "2")
+        self.assertEqual(ad_group_payload["expressionType"], "MANUAL")
+        self.assertEqual(ad_group_payload["state"], "ENABLED")
+
+        campaign_payload = build_negative_target_payload(
+            campaign_id="1",
+            predicates=[{"type": "CATEGORY_SAME_AS", "value": "123456"}],
+            state="paused",
+        )
+        self.assertEqual(campaign_payload["campaignId"], "1")
+        self.assertEqual(campaign_payload["state"], "PAUSED")
+        self.assertNotIn("adGroupId", campaign_payload)
+        self.assertNotIn("expressionType", campaign_payload)
+
+    def test_build_negative_target_payload_requires_predicate(self):
+        with self.assertRaises(ValueError):
+            build_negative_target_payload(campaign_id="1", predicates=[])
+
+    def test_build_negative_target_state_payload_uses_expected_fields(self):
+        payload = build_negative_target_state_payload(
+            target_id="9",
+            campaign_id="1",
+            ad_group_id="2",
+            state="archived",
+        )
+        self.assertEqual(payload["targetId"], "9")
+        self.assertEqual(payload["campaignId"], "1")
+        self.assertEqual(payload["adGroupId"], "2")
+        self.assertEqual(payload["state"], "ARCHIVED")
+
     def test_edit_keyword_wraps_keywords_array(self):
         env = AdsEnvironment(
             client_id="client",
@@ -526,6 +686,34 @@ class KeywordNormalizationTests(unittest.TestCase):
             {"campaignNegativeKeywords": [payload]},
         )
 
+    def test_negative_target_wrappers_use_expected_arrays(self):
+        env = AdsEnvironment(
+            client_id="client",
+            client_secret="secret",
+            refresh_token="refresh",
+            profile_id="123",
+            region="NA",
+            marketplace="US",
+        )
+        client = AmazonAdsClient(env)
+        payload = {
+            "campaignId": "1",
+            "adGroupId": "2",
+            "expression": [{"type": "ASIN_SAME_AS", "value": "B000000001"}],
+        }
+        self.assertEqual(
+            client._wrap_negative_target_payload(payload),
+            {"negativeTargetingClauses": [payload]},
+        )
+        campaign_payload = {
+            "campaignId": "1",
+            "expression": [{"type": "ASIN_SAME_AS", "value": "B000000001"}],
+        }
+        self.assertEqual(
+            client._wrap_campaign_negative_target_payload(campaign_payload),
+            {"campaignNegativeTargetingClauses": [campaign_payload]},
+        )
+
 
 class CampaignMutationTests(unittest.TestCase):
     def test_build_campaign_create_payload_uses_expected_fields(self):
@@ -560,6 +748,14 @@ class CampaignMutationTests(unittest.TestCase):
         self.assertEqual(payload["campaignId"], "1")
         self.assertEqual(payload["budget"]["budgetType"], "DAILY")
         self.assertEqual(payload["budget"]["budget"], 5.0)
+
+    def test_build_campaign_bidding_strategy_payload_uses_expected_fields(self):
+        payload = build_campaign_bidding_strategy_payload(
+            campaign_id="1",
+            strategy="auto_for_sales",
+        )
+        self.assertEqual(payload["campaignId"], "1")
+        self.assertEqual(payload["dynamicBidding"]["strategy"], "AUTO_FOR_SALES")
 
     def test_build_campaign_placement_bid_payload_uses_user_supplied_values(self):
         payload = build_campaign_placement_bid_payload(
