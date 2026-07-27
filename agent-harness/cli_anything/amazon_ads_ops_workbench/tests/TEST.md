@@ -212,7 +212,7 @@ OK
 
 Validated on 2026-07-22 after adding the Sponsored Products campaign placement bid adjustment interface.
 
-### `PYTHONPATH=/Users/dongli/Documents/广告自动化/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
+### `PYTHONPATH=/Users/dongli/Documents/ads-cli-publish-20260717/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
 
 ```text
 ----------------------------------------------------------------------
@@ -242,7 +242,7 @@ OK
 
 Validated on 2026-07-22 after completing the Sponsored Products create/add/state mutation surface.
 
-### `PYTHONPATH=/Users/dongli/Documents/广告自动化/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
+### `PATH=/Users/dongli/Documents/广告自动化/agent-harness/.venv/bin:$PATH CLI_ANYTHING_FORCE_INSTALLED=1 PYTHONPATH=/Users/dongli/Documents/广告自动化/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
 
 ```text
 ----------------------------------------------------------------------
@@ -267,3 +267,28 @@ OK
 
 - All newly added write commands support `--dry-run`.
 - This run validated request construction and CLI command routing without submitting live account mutations.
+
+## Test Results
+
+Validated on 2026-07-28 after expanding the Sponsored Products operation surface for conversation-driven CLI use.
+
+### `PYTHONPATH=/Users/dongli/Documents/广告自动化/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
+
+```text
+----------------------------------------------------------------------
+Ran 123 tests in 2.395s
+
+OK
+```
+
+## Summary Statistics
+
+- Total tests: 123
+- Pass rate: 100%
+- Runtime: 2.395s
+
+## Validation Notes
+
+- Unit coverage now includes campaign bidding strategy payloads, ad group default bid edits, generic product targeting expressions, target bid edits, negative product targeting payloads, negative target normalization, and raw `/sp/` path restriction.
+- E2E subprocess coverage now includes dry-run payload checks for campaign state/budget/strategy, ad group bid, keyword bid/state, category/expression targets, target bid, negative keywords, negative product targets, and restricted `sp-raw request`.
+- Installed command path `/Users/dongli/Documents/广告自动化/agent-harness/.venv/bin/cli-anything-amazon-ads-ops-workbench` was smoke-tested for `--help`, `targets add-expression --dry-run`, `negative-targets add-ad-group --dry-run`, `campaigns edit-bidding-strategy --dry-run`, and `sp-raw request --dry-run`.

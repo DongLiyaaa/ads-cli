@@ -114,6 +114,22 @@ def build_ad_group_state_payload(
     return payload
 
 
+def build_ad_group_bid_payload(
+    campaign_id: str,
+    ad_group_id: str,
+    default_bid: float,
+    state: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "campaignId": campaign_id,
+        "adGroupId": ad_group_id,
+        "defaultBid": default_bid,
+    }
+    if state:
+        payload["state"] = state.upper()
+    return payload
+
+
 def build_keyword_create_payload(
     campaign_id: str,
     ad_group_id: str,
@@ -197,6 +213,46 @@ def build_asin_target_create_payload(
     return payload
 
 
+def build_expression_target_create_payload(
+    campaign_id: str,
+    ad_group_id: str,
+    predicates: list[dict[str, Any]],
+    bid: float | None = None,
+    state: str = "ENABLED",
+    expression_type: str = "MANUAL",
+) -> dict[str, Any]:
+    if not predicates:
+        raise ValueError("At least one targeting predicate is required.")
+    payload: dict[str, Any] = {
+        "campaignId": campaign_id,
+        "adGroupId": ad_group_id,
+        "state": state.upper(),
+        "expressionType": expression_type.upper(),
+        "expression": predicates,
+    }
+    if bid is not None:
+        payload["bid"] = bid
+    return payload
+
+
+def build_category_target_create_payload(
+    campaign_id: str,
+    ad_group_id: str,
+    category_id: str,
+    bid: float | None = None,
+    state: str = "ENABLED",
+    expression_type: str = "MANUAL",
+) -> dict[str, Any]:
+    return build_expression_target_create_payload(
+        campaign_id=campaign_id,
+        ad_group_id=ad_group_id,
+        predicates=[{"type": "CATEGORY_SAME_AS", "value": category_id}],
+        bid=bid,
+        state=state,
+        expression_type=expression_type,
+    )
+
+
 def build_target_state_payload(
     target_id: str,
     state: str,
@@ -214,6 +270,26 @@ def build_target_state_payload(
         payload["adGroupId"] = ad_group_id
     if bid is not None:
         payload["bid"] = bid
+    return payload
+
+
+def build_target_bid_payload(
+    target_id: str,
+    bid: float,
+    campaign_id: str | None = None,
+    ad_group_id: str | None = None,
+    state: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "targetId": target_id,
+        "bid": bid,
+    }
+    if campaign_id:
+        payload["campaignId"] = campaign_id
+    if ad_group_id:
+        payload["adGroupId"] = ad_group_id
+    if state:
+        payload["state"] = state.upper()
     return payload
 
 
@@ -252,15 +328,17 @@ def build_keyword_edit_payload(
     ad_group_id: str,
     keyword_id: str,
     bid: float,
-    state: str = "ENABLED",
+    state: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "campaignId": campaign_id,
         "adGroupId": ad_group_id,
         "keywordId": keyword_id,
         "bid": bid,
-        "state": state,
     }
+    if state:
+        payload["state"] = state.upper()
+    return payload
 
 
 def build_keyword_state_payload(
@@ -289,6 +367,61 @@ def build_negative_state_payload(
         "keywordId": keyword_id,
         "state": state.upper(),
     }
+
+
+def build_negative_targets_filter(
+    campaign_id: str | None = None,
+    ad_group_id: str | None = None,
+    target_id: str | None = None,
+    state_filter: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"maxResults": 100}
+    if campaign_id:
+        payload["campaignIdFilter"] = {"include": [campaign_id]}
+    if ad_group_id:
+        payload["adGroupIdFilter"] = {"include": [ad_group_id]}
+    if target_id:
+        payload["targetIdFilter"] = {"include": [target_id]}
+    if state_filter:
+        payload["stateFilter"] = {"include": [state_filter.upper()]}
+    return payload
+
+
+def build_negative_target_payload(
+    campaign_id: str,
+    predicates: list[dict[str, Any]],
+    ad_group_id: str | None = None,
+    state: str = "ENABLED",
+    expression_type: str = "MANUAL",
+) -> dict[str, Any]:
+    if not predicates:
+        raise ValueError("At least one negative targeting predicate is required.")
+    payload: dict[str, Any] = {
+        "campaignId": campaign_id,
+        "state": state.upper(),
+        "expression": predicates,
+    }
+    if ad_group_id:
+        payload["adGroupId"] = ad_group_id
+        payload["expressionType"] = expression_type.upper()
+    return payload
+
+
+def build_negative_target_state_payload(
+    target_id: str,
+    state: str,
+    campaign_id: str | None = None,
+    ad_group_id: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "targetId": target_id,
+        "state": state.upper(),
+    }
+    if campaign_id:
+        payload["campaignId"] = campaign_id
+    if ad_group_id:
+        payload["adGroupId"] = ad_group_id
+    return payload
 
 
 def normalize_keyword_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -362,6 +495,26 @@ def normalize_negative_row(row: dict[str, Any], scope: str) -> dict[str, Any]:
         "negativeKeywordId": "" if keyword_id is None else str(keyword_id),
         "keywordText": str(row.get("keywordText") or row.get("keyword") or ""),
         "matchType": str(row.get("matchType") or ""),
+        "state": str(row.get("state") or ""),
+        "campaignId": "" if row.get("campaignId") is None else str(row.get("campaignId")),
+        "adGroupId": "" if row.get("adGroupId") is None else str(row.get("adGroupId")),
+        "scope": scope,
+    }
+
+
+def normalize_negative_target_row(row: dict[str, Any], scope: str) -> dict[str, Any]:
+    target_id = (
+        row.get("targetId")
+        or row.get("targetingClauseId")
+        or row.get("negativeTargetId")
+        or row.get("negativeTargetingClauseId")
+        or row.get("campaignNegativeTargetingClauseId")
+        or row.get("id")
+    )
+    return {
+        "negativeTargetId": "" if target_id is None else str(target_id),
+        "expressionType": str(row.get("expressionType") or ""),
+        "expression": row.get("expression") or [],
         "state": str(row.get("state") or ""),
         "campaignId": "" if row.get("campaignId") is None else str(row.get("campaignId")),
         "adGroupId": "" if row.get("adGroupId") is None else str(row.get("adGroupId")),
