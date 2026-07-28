@@ -292,3 +292,35 @@ OK
 - Unit coverage now includes campaign bidding strategy payloads, ad group default bid edits, generic product targeting expressions, target bid edits, negative product targeting payloads, negative target normalization, and raw `/sp/` path restriction.
 - E2E subprocess coverage now includes dry-run payload checks for campaign state/budget/strategy, ad group bid, keyword bid/state, category/expression targets, target bid, negative keywords, negative product targets, and restricted `sp-raw request`.
 - Installed command path `/Users/dongli/Documents/广告自动化/agent-harness/.venv/bin/cli-anything-amazon-ads-ops-workbench` was smoke-tested for `--help`, `targets add-expression --dry-run`, `negative-targets add-ad-group --dry-run`, `campaigns edit-bidding-strategy --dry-run`, and `sp-raw request --dry-run`.
+
+## Test Results
+
+Validated on 2026-07-28 after adding the live mutation approval gate.
+
+### `PYTHONPATH=/Users/dongli/Documents/ads-cli-publish-20260717/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
+
+```text
+----------------------------------------------------------------------
+Ran 128 tests in 2.625s
+
+OK
+```
+
+### `python3 -m compileall -q agent-harness/cli_anything/amazon_ads_ops_workbench`
+
+```text
+OK
+```
+
+## Summary Statistics
+
+- Total tests: 128
+- Pass rate: 100%
+- Runtime: 2.625s
+
+## Validation Notes
+
+- SP write commands now return `meta.mode = "approval-plan"` by default instead of submitting live mutations.
+- `approvals show`, `approvals list`, and `approvals execute` are covered in E2E subprocess tests.
+- `approvals execute` rejects non-exact confirmation text and does not submit when credentials are missing.
+- Read commands and report task/data commands remain outside the approval gate.

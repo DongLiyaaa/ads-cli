@@ -58,6 +58,20 @@ The CLI uses the same environment variables as the existing Vite proxy:
 | Negative keyword | `negatives add-ad-group`, `negatives add-campaign` | not applicable | `negatives set-state` |
 | Negative product/category target | `negative-targets add-ad-group`, `negative-targets add-campaign` | not applicable | `negative-targets set-state` |
 
-All write commands support `--dry-run` so agents can inspect the exact request payload before submitting to Amazon Ads.
+All write commands support `--dry-run` so agents can inspect the exact request payload without saving an approval plan.
 
-`sp-raw request` is restricted to `/sp/` paths and requires `--confirm-submit` for live calls. It exists as an escape hatch for official SP endpoints not yet covered by typed commands, not as the default operation path.
+## Live mutation approval gate
+
+Read commands and report commands run normally. SP write commands do not submit directly by default. When a write command is run without `--dry-run`, the CLI creates an approval plan with the exact request payload, payload hash, risk level, and this required user prompt:
+
+```text
+是否执行？执行请回复“确认”，不执行则无需回复！
+```
+
+Only after the user replies exactly `确认` should an agent call:
+
+```bash
+cli-anything-amazon-ads-ops-workbench --json approvals execute --plan-id <PLAN_ID> --confirm-text 确认
+```
+
+`sp-raw request` is restricted to `/sp/` paths and is also approval-gated. It exists as an escape hatch for official SP endpoints not yet covered by typed commands, not as the default operation path.
