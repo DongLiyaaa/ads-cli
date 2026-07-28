@@ -240,6 +240,101 @@ OK
 
 ## Test Results
 
+Validated on 2026-07-29 after adding the Sponsored Brands non-creative operation surface.
+
+### `python3 -m py_compile agent-harness/cli_anything/amazon_ads_ops_workbench/amazon_ads_ops_workbench_cli.py agent-harness/cli_anything/amazon_ads_ops_workbench/core/*.py`
+
+```text
+OK
+```
+
+### `python3 -m unittest discover -s agent-harness/cli_anything/amazon_ads_ops_workbench/tests -v`
+
+```text
+----------------------------------------------------------------------
+Ran 157 tests in 3.411s
+
+OK
+```
+
+## Summary Statistics
+
+- Total tests: 157
+- Pass rate: 100%
+- Runtime: 3.411s
+- Validation runner: Python 3.14 `unittest`; `pytest` was not installed in the active environment.
+
+## Validation Notes
+
+- New SB dry-run and approval coverage includes campaigns, ad groups, keywords, negative keywords, product targets, negative targets, raw requests, and SB report creation/parsing.
+- All SP and SB write commands are approval-gated when not run with `--dry-run`.
+- `sb-raw` blocks media, creative, image, video, logo, and asset paths or payload keys before network execution.
+- No live Amazon Ads mutation was submitted during this validation run.
+
+## Test Results
+
+Validated on 2026-07-29 after adding the machine-readable capability contract for agents.
+
+### `python3 -m py_compile agent-harness/cli_anything/amazon_ads_ops_workbench/amazon_ads_ops_workbench_cli.py agent-harness/cli_anything/amazon_ads_ops_workbench/core/*.py agent-harness/cli_anything/amazon_ads_ops_workbench/tests/*.py`
+
+```text
+OK
+```
+
+### `python3 -m unittest discover -s agent-harness/cli_anything/amazon_ads_ops_workbench/tests -v`
+
+```text
+----------------------------------------------------------------------
+Ran 159 tests in 3.499s
+
+OK
+```
+
+## Summary Statistics
+
+- Total tests: 159
+- Pass rate: 100%
+- Runtime: 3.499s
+
+## Validation Notes
+
+- Added `capabilities --ad-product SP --writes-only` so agents can inspect executable SP write operations before claiming an operation is unsupported.
+- Verified `campaigns.edit-budget` returns `canExecute: true`, `approvalRequired: true`, and `executionMode: approval-gated`.
+- The capability contract explicitly tells agents not to treat the approval gate as lack of execution capability.
+
+## Test Results
+
+Validated on 2026-07-29 after adding SB-specific capability contract assertions.
+
+### `python3 -m py_compile agent-harness/cli_anything/amazon_ads_ops_workbench/amazon_ads_ops_workbench_cli.py agent-harness/cli_anything/amazon_ads_ops_workbench/core/*.py agent-harness/cli_anything/amazon_ads_ops_workbench/tests/*.py`
+
+```text
+OK
+```
+
+### `python3 -m unittest discover -s agent-harness/cli_anything/amazon_ads_ops_workbench/tests -v`
+
+```text
+----------------------------------------------------------------------
+Ran 162 tests in 3.822s
+
+OK
+```
+
+## Summary Statistics
+
+- Total tests: 162
+- Pass rate: 100%
+- Runtime: 3.822s
+
+## Validation Notes
+
+- Added SB capability checks for `sb-keywords.edit-bid` so agents can inspect executable SB write operations before claiming SB is unsupported.
+- Verified `sb-keywords.edit-bid` returns `canExecute: true`, `approvalRequired: true`, and `executionMode: approval-gated`.
+- Verified `sb-raw.request` remains executable through the approval gate while documenting that media, creative, image, video, logo, and asset paths or payload keys are blocked.
+
+## Test Results
+
 Validated on 2026-07-22 after completing the Sponsored Products create/add/state mutation surface.
 
 ### `PATH=/Users/dongli/Documents/广告自动化/agent-harness/.venv/bin:$PATH CLI_ANYTHING_FORCE_INSTALLED=1 PYTHONPATH=/Users/dongli/Documents/广告自动化/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
@@ -292,3 +387,67 @@ OK
 - Unit coverage now includes campaign bidding strategy payloads, ad group default bid edits, generic product targeting expressions, target bid edits, negative product targeting payloads, negative target normalization, and raw `/sp/` path restriction.
 - E2E subprocess coverage now includes dry-run payload checks for campaign state/budget/strategy, ad group bid, keyword bid/state, category/expression targets, target bid, negative keywords, negative product targets, and restricted `sp-raw request`.
 - Installed command path `/Users/dongli/Documents/广告自动化/agent-harness/.venv/bin/cli-anything-amazon-ads-ops-workbench` was smoke-tested for `--help`, `targets add-expression --dry-run`, `negative-targets add-ad-group --dry-run`, `campaigns edit-bidding-strategy --dry-run`, and `sp-raw request --dry-run`.
+
+## Test Results
+
+Validated on 2026-07-28 after adding the live mutation approval gate.
+
+### `PYTHONPATH=/Users/dongli/Documents/ads-cli-publish-20260717/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
+
+```text
+----------------------------------------------------------------------
+Ran 128 tests in 2.625s
+
+OK
+```
+
+### `python3 -m compileall -q agent-harness/cli_anything/amazon_ads_ops_workbench`
+
+```text
+OK
+```
+
+## Summary Statistics
+
+- Total tests: 128
+- Pass rate: 100%
+- Runtime: 2.625s
+
+## Validation Notes
+
+- SP write commands now return `meta.mode = "approval-plan"` by default instead of submitting live mutations.
+- `approvals show`, `approvals list`, and `approvals execute` are covered in E2E subprocess tests.
+- `approvals execute` rejects non-exact confirmation text and does not submit when credentials are missing.
+- Read commands and report task/data commands remain outside the approval gate.
+
+## Test Results
+
+Validated on 2026-07-29 after adding the Sponsored Display non-media operation surface and SBV capability alias.
+
+### `python3 -m py_compile agent-harness/cli_anything/amazon_ads_ops_workbench/amazon_ads_ops_workbench_cli.py agent-harness/cli_anything/amazon_ads_ops_workbench/core/*.py agent-harness/cli_anything/amazon_ads_ops_workbench/tests/test_core.py agent-harness/cli_anything/amazon_ads_ops_workbench/tests/test_full_e2e.py`
+
+```text
+OK
+```
+
+### `PYTHONPATH=agent-harness python3 -m unittest discover -s agent-harness/cli_anything/amazon_ads_ops_workbench/tests -v`
+
+```text
+----------------------------------------------------------------------
+Ran 180 tests in 5.172s
+
+OK
+```
+
+## Summary Statistics
+
+- Total tests: 180
+- Pass rate: 100%
+- Runtime: 5.172s
+
+## Validation Notes
+
+- Added SD dry-run and approval-plan coverage for campaigns, ad groups, product ads, product/audience targets, location targets, budget rules, raw requests, and SD report creation/parsing.
+- Added `capabilities --ad-product SD --writes-only` and `capabilities --ad-product SBV --writes-only`; SBV is documented as the SB non-creative command alias.
+- Verified `sd-raw` blocks creative, image, video, logo, media, and asset paths or payload keys before network execution.
+- No live Amazon Ads mutation was submitted during this validation run.
