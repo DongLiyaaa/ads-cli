@@ -31,6 +31,10 @@ class CliE2ETests(unittest.TestCase):
         "AMAZON_ADS_PROFILE_ID": "",
         "AMAZON_ADS_REGION": "NA",
         "AMAZON_ADS_MARKETPLACE": "US",
+        "AMAZON_ADS_APPROVAL_DIR": os.path.join(
+            tempfile.gettempdir(),
+            "amazon_ads_ops_workbench_test_approvals",
+        ),
     }
 
     def _run(self, args, extra_env=None):
@@ -48,10 +52,123 @@ class CliE2ETests(unittest.TestCase):
             env=env,
         )
 
+    def _assert_approval_plan(self, result, operation):
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "approval-plan")
+        self.assertEqual(payload["meta"]["status"], "awaiting_user_confirmation")
+        self.assertEqual(payload["meta"]["operation"], operation)
+        self.assertEqual(
+            payload["meta"]["confirmationPrompt"],
+            "是否执行？执行请回复“确认”，不执行则无需回复！",
+        )
+        self.assertTrue(payload["meta"]["planId"])
+        self.assertIn("payloadHash", payload["data"])
+        return payload
+
     def test_help(self):
         result = self._run(["--help"])
         self.assertEqual(result.returncode, 0)
         self.assertIn("Usage", result.stdout)
+        self.assertIn("capabilities", result.stdout)
+
+    def test_capabilities_sp_writes_are_machine_readable(self):
+        result = self._run(
+            [
+                "--json",
+                "capabilities",
+                "--ad-product",
+                "SP",
+                "--writes-only",
+                "--operation",
+                "campaigns.edit-budget",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "local")
+        self.assertEqual(payload["meta"]["status"], "ok")
+        rows = payload["data"]["capabilities"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["operation"], "campaigns.edit-budget")
+        self.assertTrue(rows[0]["canExecute"])
+        self.assertTrue(rows[0]["approvalRequired"])
+        self.assertEqual(rows[0]["executionMode"], "approval-gated")
+        self.assertEqual(payload["data"]["summary"]["executableWrites"], 1)
+
+    def test_capabilities_sb_writes_are_machine_readable(self):
+        result = self._run(
+            [
+                "--json",
+                "capabilities",
+                "--ad-product",
+                "SB",
+                "--writes-only",
+                "--operation",
+                "sb-keywords.edit-bid",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "local")
+        self.assertEqual(payload["meta"]["status"], "ok")
+        self.assertIn("SP, SB, SBV, or SD", payload["meta"]["agentInstruction"])
+        rows = payload["data"]["capabilities"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["operation"], "sb-keywords.edit-bid")
+        self.assertEqual(rows[0]["adProduct"], "SB")
+        self.assertTrue(rows[0]["canExecute"])
+        self.assertTrue(rows[0]["approvalRequired"])
+        self.assertEqual(rows[0]["executionMode"], "approval-gated")
+        self.assertEqual(payload["data"]["summary"]["executableWrites"], 1)
+
+    def test_capabilities_sd_writes_are_machine_readable(self):
+        result = self._run(
+            [
+                "--json",
+                "capabilities",
+                "--ad-product",
+                "SD",
+                "--writes-only",
+                "--operation",
+                "sd-targets.edit-bid",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "local")
+        self.assertEqual(payload["meta"]["status"], "ok")
+        self.assertIn("SP, SB, SBV, or SD", payload["meta"]["agentInstruction"])
+        rows = payload["data"]["capabilities"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["operation"], "sd-targets.edit-bid")
+        self.assertEqual(rows[0]["adProduct"], "SD")
+        self.assertTrue(rows[0]["canExecute"])
+        self.assertTrue(rows[0]["approvalRequired"])
+
+    def test_capabilities_sbv_aliases_sb_non_creative_writes(self):
+        result = self._run(
+            [
+                "--json",
+                "capabilities",
+                "--ad-product",
+                "SBV",
+                "--writes-only",
+                "--operation",
+                "sb-targets.edit-bid",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["aliasOf"], "SB")
+        rows = payload["data"]["capabilities"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["operation"], "sb-targets.edit-bid")
+        self.assertTrue(rows[0]["approvalRequired"])
 
     def test_snapshot_json_without_credentials(self):
         result = self._run(
@@ -160,10 +277,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "negatives.add-ad-group")
 
     def test_keywords_edit_bid_without_credentials(self):
         result = self._run(
@@ -182,10 +296,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "keywords.edit-bid")
 
     def test_portfolios_list_without_credentials(self):
         result = self._run(
@@ -220,10 +331,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "campaigns.set-state")
 
     def test_campaigns_edit_budget_without_credentials(self):
         result = self._run(
@@ -238,10 +346,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "campaigns.edit-budget")
 
     def test_campaigns_set_state_dry_run(self):
         result = self._run(
@@ -353,11 +458,8 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
-        self.assertEqual(payload["data"]["requested"]["topOfSearch"], 50)
+        payload = self._assert_approval_plan(result, "campaigns.edit-placement-bids")
+        self.assertEqual(payload["data"]["placementPolicy"], "user_supplied_percentages_only")
 
     def test_campaigns_edit_placement_bids_requires_user_value(self):
         result = self._run(
@@ -770,10 +872,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "keywords.set-state")
 
     def test_negatives_add_campaign_without_credentials(self):
         result = self._run(
@@ -790,10 +889,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "negatives.add-campaign")
 
     def test_negatives_add_ad_group_dry_run(self):
         result = self._run(
@@ -874,10 +970,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "negatives.set-state")
 
     def test_negative_targets_list_without_credentials(self):
         result = self._run(
@@ -995,7 +1088,7 @@ class CliE2ETests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must start with /sp/", result.stderr)
 
-    def test_sp_raw_request_requires_confirm_submit_for_live(self):
+    def test_sp_raw_request_without_confirm_creates_approval_plan(self):
         result = self._run(
             [
                 "--json",
@@ -1010,8 +1103,622 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("require --confirm-submit", result.stderr)
+        payload = self._assert_approval_plan(result, "sp-raw.request")
+        self.assertEqual(payload["data"]["riskLevel"], "critical")
+
+    def test_sb_campaigns_create_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-campaigns",
+                "create",
+                "--name",
+                "SB Brand Core",
+                "--budget",
+                "15",
+                "--start-date",
+                "2026-07-29",
+                "--smart-default",
+                "MANUAL",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        campaign = payload["data"]["payload"]["campaigns"][0]
+        self.assertEqual(campaign["name"], "SB Brand Core")
+        self.assertEqual(campaign["budget"], 15.0)
+        self.assertEqual(campaign["budgetType"], "DAILY")
+        self.assertNotIn("creative", campaign)
+
+    def test_sb_campaigns_set_state_without_credentials(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-campaigns",
+                "set-state",
+                "--campaign-id",
+                "1",
+                "--state",
+                "PAUSED",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self._assert_approval_plan(result, "sb-campaigns.set-state")
+
+    def test_sb_campaigns_archive_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-campaigns",
+                "archive",
+                "--campaign-id",
+                "1",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(
+            payload["data"]["payload"]["campaignIdFilter"]["include"], ["1"]
+        )
+
+    def test_sb_ad_groups_create_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-ad-groups",
+                "create",
+                "--campaign-id",
+                "1",
+                "--name",
+                "SB Exact",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        ad_group = payload["data"]["payload"]["adGroups"][0]
+        self.assertEqual(ad_group["campaignId"], "1")
+        self.assertEqual(ad_group["state"], "PAUSED")
+        self.assertNotIn("defaultBid", ad_group)
+
+    def test_sb_ad_groups_edit_name_without_credentials(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-ad-groups",
+                "edit-name",
+                "--ad-group-id",
+                "2",
+                "--name",
+                "SB Phrase",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self._assert_approval_plan(result, "sb-ad-groups.edit-name")
+
+    def test_sb_keywords_add_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-keywords",
+                "add",
+                "--campaign-id",
+                "1",
+                "--ad-group-id",
+                "2",
+                "--keyword-text",
+                "ai recorder",
+                "--match-type",
+                "EXACT",
+                "--bid",
+                "0.91",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        keyword = payload["data"]["payload"]["keywords"][0]
+        self.assertEqual(keyword["matchType"], "exact")
+        self.assertEqual(keyword["bid"], 0.91)
+
+    def test_sb_keywords_edit_bid_without_credentials(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-keywords",
+                "edit-bid",
+                "--keyword-id",
+                "3",
+                "--bid",
+                "0.92",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self._assert_approval_plan(result, "sb-keywords.edit-bid")
+
+    def test_sb_negatives_add_campaign_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-negatives",
+                "add-campaign",
+                "--campaign-id",
+                "1",
+                "--keyword-text",
+                "usb c camera",
+                "--match-type",
+                "NEGATIVE_EXACT",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        negative = payload["data"]["payload"]["negativeKeywords"][0]
+        self.assertEqual(negative["matchType"], "negativeExact")
+        self.assertNotIn("adGroupId", negative)
+
+    def test_sb_targets_add_expression_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-targets",
+                "add-expression",
+                "--campaign-id",
+                "1",
+                "--ad-group-id",
+                "2",
+                "--asin",
+                "B000000001",
+                "--predicate",
+                "asinPriceBetween=10-20",
+                "--bid",
+                "0.88",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        target = payload["data"]["payload"]["targets"][0]
+        self.assertEqual(target["expression"][0]["type"], "asinSameAs")
+        self.assertEqual(target["expression"][1]["type"], "asinPriceBetween")
+        self.assertEqual(target["bid"], 0.88)
+
+    def test_sb_negative_targets_add_campaign_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-negative-targets",
+                "add-campaign",
+                "--campaign-id",
+                "1",
+                "--asin",
+                "B000000001",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        negative_target = payload["data"]["payload"]["negativeTargets"][0]
+        self.assertEqual(negative_target["expression"][0]["type"], "asinSameAs")
+        self.assertNotIn("adGroupId", negative_target)
+
+    def test_sb_raw_request_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-raw",
+                "request",
+                "--method",
+                "POST",
+                "--path",
+                "/sb/v4/campaigns/list",
+                "--payload-json",
+                '{"maxResults": 10}',
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "dry-run")
+        self.assertEqual(payload["data"]["payload"]["path"], "/sb/v4/campaigns/list")
+
+    def test_sb_raw_rejects_media_path_and_payload(self):
+        media_path = self._run(
+            [
+                "--json",
+                "sb-raw",
+                "request",
+                "--method",
+                "POST",
+                "--path",
+                "/sb/v4/ads/video",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertNotEqual(media_path.returncode, 0)
+        self.assertIn("blocked", media_path.stderr)
+
+        media_payload = self._run(
+            [
+                "--json",
+                "sb-raw",
+                "request",
+                "--method",
+                "POST",
+                "--path",
+                "/sb/v4/campaigns",
+                "--payload-json",
+                '{"creative": {"headline": "x"}}',
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertNotEqual(media_payload.returncode, 0)
+        self.assertIn("blocked media/creative key", media_payload.stderr)
+
+    def test_sb_raw_without_confirm_creates_critical_approval_plan(self):
+        result = self._run(
+            [
+                "--json",
+                "sb-raw",
+                "request",
+                "--method",
+                "POST",
+                "--path",
+                "/sb/v4/campaigns/list",
+                "--payload-json",
+                '{"maxResults": 10}',
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        payload = self._assert_approval_plan(result, "sb-raw.request")
+        self.assertEqual(payload["data"]["riskLevel"], "critical")
+
+    def test_reports_create_sb_targeting_without_credentials(self):
+        result = self._run(
+            [
+                "--json",
+                "reports",
+                "create-sb-targeting",
+                "--start-date",
+                "2026-07-01",
+                "--end-date",
+                "2026-07-07",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "mock")
+        self.assertEqual(payload["data"]["requested"]["reportTypeId"], "sbTargeting")
+
+    def test_sd_campaigns_create_dry_run(self):
+        result = self._run(
+            [
+                "--json",
+                "sd-campaigns",
+                "create",
+                "--name",
+                "SD Retargeting",
+                "--budget",
+                "18.5",
+                "--start-date",
+                "2026-07-29",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        campaign = payload["data"]["payload"]["campaigns"][0]
+        self.assertEqual(payload["meta"]["mode"], "dry-run")
+        self.assertEqual(campaign["budget"], "18.50")
+        self.assertEqual(campaign["startDate"], "20260729")
+        self.assertEqual(campaign["state"], "paused")
+
+    def test_sd_campaigns_set_state_without_credentials(self):
+        result = self._run(
+            [
+                "--json",
+                "sd-campaigns",
+                "set-state",
+                "--campaign-id",
+                "1",
+                "--state",
+                "paused",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        plan = self._assert_approval_plan(result, "sd-campaigns.set-state")
+        self.assertEqual(plan["data"]["riskLevel"], "high")
+
+    def test_sd_ad_groups_product_ads_targets_and_locations_dry_run(self):
+        ad_group = self._run(
+            [
+                "--json",
+                "sd-ad-groups",
+                "create",
+                "--campaign-id",
+                "1",
+                "--name",
+                "SD Core",
+                "--default-bid",
+                "0.72",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(ad_group.returncode, 0, ad_group.stderr)
+        ad_group_payload = json.loads(ad_group.stdout)
+        self.assertEqual(
+            ad_group_payload["data"]["payload"]["adGroups"][0]["defaultBid"],
+            0.72,
+        )
+
+        product_ad = self._run(
+            [
+                "--json",
+                "sd-product-ads",
+                "add",
+                "--campaign-id",
+                "1",
+                "--ad-group-id",
+                "2",
+                "--sku",
+                "SKU-1",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(product_ad.returncode, 0, product_ad.stderr)
+        product_ad_payload = json.loads(product_ad.stdout)
+        self.assertEqual(product_ad_payload["data"]["payload"]["productAds"][0]["sku"], "SKU-1")
+
+        target = self._run(
+            [
+                "--json",
+                "sd-targets",
+                "add-audience",
+                "--ad-group-id",
+                "2",
+                "--audience-id",
+                "aud-1",
+                "--bid",
+                "0.88",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(target.returncode, 0, target.stderr)
+        target_payload = json.loads(target.stdout)
+        target_row = target_payload["data"]["payload"]["targets"][0]
+        self.assertEqual(target_row["expression"][0]["type"], "audience")
+        self.assertEqual(target_row["bid"], "0.88")
+
+        location = self._run(
+            [
+                "--json",
+                "sd-locations",
+                "add",
+                "--ad-group-id",
+                "2",
+                "--location-id",
+                "loc-1",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(location.returncode, 0, location.stderr)
+        location_payload = json.loads(location.stdout)
+        self.assertEqual(
+            location_payload["data"]["payload"]["locations"][0]["expression"][0]["type"],
+            "location",
+        )
+
+    def test_sd_budget_rules_create_dry_run_and_associate_plan(self):
+        create = self._run(
+            [
+                "--json",
+                "sd-budget-rules",
+                "create",
+                "--name",
+                "Prime Day",
+                "--rule-type",
+                "SCHEDULE",
+                "--increase-type",
+                "PERCENT",
+                "--increase-value",
+                "20",
+                "--start-date",
+                "2026-07-29",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(create.returncode, 0, create.stderr)
+        create_payload = json.loads(create.stdout)
+        rule = create_payload["data"]["payload"]["budgetRulesDetails"][0]
+        self.assertEqual(rule["budgetIncreaseBy"]["value"], 20.0)
+        self.assertEqual(rule["duration"]["dateRangeTypeRuleDuration"]["startDate"], "20260729")
+
+        associate = self._run(
+            [
+                "--json",
+                "sd-budget-rules",
+                "associate",
+                "--campaign-id",
+                "1",
+                "--rule-id",
+                "rule-1",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        plan = self._assert_approval_plan(associate, "sd-budget-rules.associate")
+        self.assertEqual(plan["data"]["changeCount"], 1)
+
+    def test_sd_raw_request_dry_run_and_media_block(self):
+        result = self._run(
+            [
+                "--json",
+                "sd-raw",
+                "request",
+                "--method",
+                "POST",
+                "--path",
+                "/sd/campaigns",
+                "--payload-json",
+                '[{"name": "x"}]',
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "dry-run")
+        self.assertEqual(payload["data"]["payload"]["path"], "/sd/campaigns")
+
+        blocked = self._run(
+            [
+                "--json",
+                "sd-raw",
+                "request",
+                "--method",
+                "POST",
+                "--path",
+                "/sd/creatives",
+                "--payload-json",
+                "{}",
+                "--dry-run",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn("blocked", blocked.stderr)
+
+    def test_sd_raw_without_confirm_creates_critical_approval_plan(self):
+        result = self._run(
+            [
+                "--json",
+                "sd-raw",
+                "request",
+                "--method",
+                "POST",
+                "--path",
+                "/sd/campaigns",
+                "--payload-json",
+                '[{"name": "x"}]',
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        payload = self._assert_approval_plan(result, "sd-raw.request")
+        self.assertEqual(payload["data"]["riskLevel"], "critical")
+
+    def test_reports_create_sd_targeting_without_credentials(self):
+        result = self._run(
+            [
+                "--json",
+                "reports",
+                "create-sd-targeting",
+                "--start-date",
+                "2026-07-01",
+                "--end-date",
+                "2026-07-07",
+            ],
+            extra_env=self.BLANK_ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "mock")
+        self.assertEqual(payload["data"]["requested"]["reportTypeId"], "sdTargeting")
+
+    def test_approval_plan_show_list_and_execute_guard(self):
+        with tempfile.TemporaryDirectory() as approval_dir:
+            env = dict(self.BLANK_ENV)
+            env["AMAZON_ADS_APPROVAL_DIR"] = approval_dir
+            planned = self._run(
+                [
+                    "--json",
+                    "campaigns",
+                    "set-state",
+                    "--campaign-id",
+                    "1",
+                    "--state",
+                    "PAUSED",
+                ],
+                extra_env=env,
+            )
+            plan_payload = self._assert_approval_plan(planned, "campaigns.set-state")
+            plan_id = plan_payload["meta"]["planId"]
+
+            shown = self._run(
+                ["--json", "approvals", "show", "--plan-id", plan_id],
+                extra_env=env,
+            )
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            shown_payload = json.loads(shown.stdout)
+            self.assertEqual(shown_payload["planId"], plan_id)
+            self.assertEqual(shown_payload["payload"]["campaigns"][0]["state"], "PAUSED")
+
+            listed = self._run(
+                [
+                    "--json",
+                    "approvals",
+                    "list",
+                    "--status",
+                    "awaiting_user_confirmation",
+                ],
+                extra_env=env,
+            )
+            self.assertEqual(listed.returncode, 0, listed.stderr)
+            list_payload = json.loads(listed.stdout)
+            self.assertEqual(list_payload["data"]["plans"][0]["planId"], plan_id)
+
+            rejected = self._run(
+                [
+                    "--json",
+                    "approvals",
+                    "execute",
+                    "--plan-id",
+                    plan_id,
+                    "--confirm-text",
+                    "确定",
+                ],
+                extra_env=env,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn('confirmation must be exactly "确认"', rejected.stderr)
+
+            missing_credentials = self._run(
+                [
+                    "--json",
+                    "approvals",
+                    "execute",
+                    "--plan-id",
+                    plan_id,
+                    "--confirm-text",
+                    "确认",
+                ],
+                extra_env=env,
+            )
+            self.assertEqual(missing_credentials.returncode, 0, missing_credentials.stderr)
+            missing_payload = json.loads(missing_credentials.stdout)
+            self.assertEqual(missing_payload["meta"]["mode"], "mock")
+            self.assertIn("missingCredentials", missing_payload["meta"])
+            self.assertEqual(
+                missing_payload["data"]["requested"]["planId"],
+                plan_id,
+            )
 
     def test_reports_parse_search_terms_local_file(self):
         with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False) as fh:
@@ -1086,6 +1793,61 @@ class CliE2ETests(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertEqual(payload["meta"]["mode"], "local")
             self.assertEqual(payload["data"]["summary"]["rows"], 1)
+        finally:
+            os.unlink(path)
+
+    def test_reports_parse_sb_report_local_file(self):
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False) as fh:
+            json.dump(
+                [
+                    {
+                        "date": "2026-07-01",
+                        "campaignId": 1,
+                        "campaignName": "SB Brand Core",
+                        "impressions": "10",
+                        "cost": "2.50",
+                    }
+                ],
+                fh,
+            )
+            path = fh.name
+        try:
+            result = self._run(
+                ["--json", "reports", "parse-sb-report", "--input-file", path]
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["meta"]["mode"], "local")
+            self.assertEqual(payload["data"]["summary"]["rows"], 1)
+            self.assertEqual(payload["data"]["rows"][0]["campaignId"], "1")
+        finally:
+            os.unlink(path)
+
+    def test_reports_parse_sd_report_local_file(self):
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False) as fh:
+            json.dump(
+                [
+                    {
+                        "date": "2026-07-01",
+                        "campaignId": 1,
+                        "campaignName": "SD Retargeting",
+                        "impressions": "10",
+                        "cost": "2.50",
+                    }
+                ],
+                fh,
+            )
+            path = fh.name
+        try:
+            result = self._run(
+                ["--json", "reports", "parse-sd-report", "--input-file", path]
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["meta"]["mode"], "local")
+            self.assertEqual(payload["data"]["summary"]["rows"], 1)
+            self.assertEqual(payload["data"]["rows"][0]["campaignId"], "1")
+            self.assertEqual(payload["data"]["rows"][0]["cost"], 2.5)
         finally:
             os.unlink(path)
 

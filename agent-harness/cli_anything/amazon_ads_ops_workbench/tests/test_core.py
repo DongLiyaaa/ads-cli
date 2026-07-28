@@ -11,6 +11,15 @@ if HARNESS_ROOT not in sys.path:
 
 from cli_anything.amazon_ads_ops_workbench.core.env import AdsEnvironment, normalize_region
 from cli_anything.amazon_ads_ops_workbench.core.client import AmazonAdsClient
+from cli_anything.amazon_ads_ops_workbench.core.approvals import (
+    CONFIRMATION_PROMPT,
+    assert_confirmation_text,
+    count_changes,
+    list_approval_plans,
+    payload_hash,
+    read_approval_plan,
+    write_approval_plan,
+)
 from cli_anything.amazon_ads_ops_workbench.core.campaigns import (
     build_campaign_bidding_strategy_payload,
     build_campaign_budget_payload,
@@ -19,6 +28,9 @@ from cli_anything.amazon_ads_ops_workbench.core.campaigns import (
     build_campaign_state_payload,
     build_portfolio_create_payload,
     build_portfolio_state_payload,
+)
+from cli_anything.amazon_ads_ops_workbench.core.capabilities import (
+    build_capability_contract,
 )
 from cli_anything.amazon_ads_ops_workbench.core.keywords import (
     build_ad_groups_filter,
@@ -55,14 +67,52 @@ from cli_anything.amazon_ads_ops_workbench.core.keywords import (
 )
 from cli_anything.amazon_ads_ops_workbench.core.reports import (
     build_download_target_path,
+    build_sb_campaigns_report_body,
+    build_sb_search_term_report_body,
+    build_sb_targeting_report_body,
+    build_sd_campaigns_report_body,
+    build_sd_targeting_report_body,
     build_sp_campaign_placement_report_body,
     build_sp_keywords_report_body,
     build_sp_search_term_report_body,
     load_report_rows,
+    normalize_sb_report_row,
+    normalize_sd_report_row,
     normalize_search_term_report_row,
     normalize_sp_campaign_placement_report_row,
     normalize_sp_keyword_report_row,
     summarize_report_rows,
+)
+from cli_anything.amazon_ads_ops_workbench.core.sponsored_brands import (
+    assert_sb_raw_allowed,
+    build_sb_ad_group_archive_payload,
+    build_sb_ad_group_create_payload,
+    build_sb_ad_group_update_payload,
+    build_sb_ad_groups_filter,
+    build_sb_campaign_archive_payload,
+    build_sb_campaign_create_payload,
+    build_sb_campaign_update_payload,
+    build_sb_campaigns_filter,
+    build_sb_keyword_create_payload,
+    build_sb_keyword_update_payload,
+    build_sb_legacy_filter,
+    build_sb_negative_keyword_payload,
+    build_sb_negative_target_payload,
+    build_sb_target_payload,
+    build_sb_target_update_payload,
+    normalize_sb_predicates,
+)
+from cli_anything.amazon_ads_ops_workbench.core.sponsored_display import (
+    assert_sd_raw_allowed,
+    build_sd_ad_group_create_payload,
+    build_sd_budget_rule_association_payload,
+    build_sd_budget_rule_create_payload,
+    build_sd_campaign_create_payload,
+    build_sd_campaign_update_payload,
+    build_sd_product_ad_create_payload,
+    build_sd_query_filter,
+    build_sd_target_payload,
+    normalize_sd_predicates,
 )
 from cli_anything.amazon_ads_ops_workbench.core.snapshot import (
     build_missing_credential_snapshot,
@@ -70,6 +120,142 @@ from cli_anything.amazon_ads_ops_workbench.core.snapshot import (
     find_missing_credentials,
     pick_profile_id,
 )
+
+
+class ApprovalPlanTests(unittest.TestCase):
+    def test_payload_hash_is_stable_for_key_order(self):
+        left = {"campaigns": [{"campaignId": "1", "state": "PAUSED"}]}
+        right = {"campaigns": [{"state": "PAUSED", "campaignId": "1"}]}
+        self.assertEqual(payload_hash("campaigns.set-state", "US", left), payload_hash("campaigns.set-state", "US", right))
+
+    def test_count_changes_prefers_known_array_keys(self):
+        self.assertEqual(count_changes({"keywords": [{"keywordId": "1"}, {"keywordId": "2"}]}), 2)
+        self.assertEqual(
+            count_changes({"budgetRulesDetails": [{"ruleId": "1"}], "budgetRuleIds": ["2"]}),
+            2,
+        )
+        self.assertEqual(count_changes({"method": "GET", "path": "/sp/targets/list"}), 1)
+
+    def test_assert_confirmation_text_requires_exact_chinese_text(self):
+        assert_confirmation_text("确认")
+        with self.assertRaises(ValueError):
+            assert_confirmation_text("confirm")
+
+    def test_write_read_and_list_approval_plan(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            old_dir = os.environ.get("AMAZON_ADS_APPROVAL_DIR")
+            os.environ["AMAZON_ADS_APPROVAL_DIR"] = tmp_dir
+            try:
+                payload = {"campaigns": [{"campaignId": "1", "state": "PAUSED"}]}
+                plan = write_approval_plan(
+                    operation="campaigns.set-state",
+                    marketplace="US",
+                    payload=payload,
+                    policy="user_supplied_values_only",
+                )
+                self.assertTrue(os.path.exists(plan["_approvalPath"]))
+                self.assertEqual(plan["confirmation"]["prompt"], CONFIRMATION_PROMPT)
+                self.assertEqual(plan["status"], "awaiting_user_confirmation")
+                loaded = read_approval_plan(plan["planId"])
+                self.assertEqual(loaded["payload"], payload)
+                plans = list_approval_plans(status="awaiting_user_confirmation")
+                self.assertEqual(len(plans), 1)
+                self.assertEqual(plans[0]["planId"], plan["planId"])
+            finally:
+                if old_dir is None:
+                    os.environ.pop("AMAZON_ADS_APPROVAL_DIR", None)
+                else:
+                    os.environ["AMAZON_ADS_APPROVAL_DIR"] = old_dir
+
+
+class CapabilityContractTests(unittest.TestCase):
+    def test_sp_write_capabilities_are_declared_executable_after_confirmation(self):
+        contract = build_capability_contract(
+            ad_product="SP",
+            operation="campaigns.edit-budget",
+            writes_only=True,
+        )
+        self.assertEqual(contract["meta"]["status"], "ok")
+        self.assertIn("Do not answer", contract["meta"]["agentInstruction"])
+        rows = contract["data"]["capabilities"]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["operation"], "campaigns.edit-budget")
+        self.assertTrue(row["canPlan"])
+        self.assertTrue(row["canExecute"])
+        self.assertTrue(row["approvalRequired"])
+        self.assertEqual(row["executionMode"], "approval-gated")
+        self.assertEqual(
+            row["confirmationPrompt"],
+            "是否执行？执行请回复“确认”，不执行则无需回复！",
+        )
+        self.assertIn("approvals execute", row["executionPath"])
+
+    def test_sb_write_capabilities_are_declared_executable_after_confirmation(self):
+        contract = build_capability_contract(
+            ad_product="SB",
+            operation="sb-keywords.edit-bid",
+            writes_only=True,
+        )
+        self.assertEqual(contract["meta"]["status"], "ok")
+        self.assertIn("SP, SB, SBV, or SD", contract["meta"]["agentInstruction"])
+        rows = contract["data"]["capabilities"]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["operation"], "sb-keywords.edit-bid")
+        self.assertEqual(row["adProduct"], "SB")
+        self.assertTrue(row["canPlan"])
+        self.assertTrue(row["canExecute"])
+        self.assertTrue(row["approvalRequired"])
+        self.assertEqual(row["executionMode"], "approval-gated")
+        self.assertEqual(
+            row["confirmationPrompt"],
+            "是否执行？执行请回复“确认”，不执行则无需回复！",
+        )
+
+    def test_sb_raw_capability_is_executable_but_documents_media_block(self):
+        contract = build_capability_contract(
+            ad_product="SB",
+            operation="sb-raw.request",
+            writes_only=True,
+        )
+        rows = contract["data"]["capabilities"]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertTrue(row["canExecute"])
+        self.assertTrue(row["approvalRequired"])
+        self.assertIn("Media", row["notes"])
+        self.assertEqual(row["kind"], "raw")
+
+    def test_sd_write_capabilities_are_declared_executable_after_confirmation(self):
+        contract = build_capability_contract(
+            ad_product="SD",
+            operation="sd-targets.edit-bid",
+            writes_only=True,
+        )
+        self.assertEqual(contract["meta"]["status"], "ok")
+        self.assertIn("SP, SB, SBV, or SD", contract["meta"]["agentInstruction"])
+        rows = contract["data"]["capabilities"]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["operation"], "sd-targets.edit-bid")
+        self.assertEqual(row["adProduct"], "SD")
+        self.assertTrue(row["canPlan"])
+        self.assertTrue(row["canExecute"])
+        self.assertTrue(row["approvalRequired"])
+        self.assertEqual(row["executionMode"], "approval-gated")
+
+    def test_sbv_uses_sb_non_creative_capabilities(self):
+        contract = build_capability_contract(
+            ad_product="SBV",
+            operation="sb-targets.edit-bid",
+            writes_only=True,
+        )
+        self.assertEqual(contract["meta"]["aliasOf"], "SB")
+        rows = contract["data"]["capabilities"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["operation"], "sb-targets.edit-bid")
+        self.assertTrue(rows[0]["canExecute"])
 
 
 class EnvTests(unittest.TestCase):
@@ -151,6 +337,313 @@ class EnvTests(unittest.TestCase):
                 path="/sd/campaigns/list",
                 payload={},
             )
+
+    def test_client_content_media_type_uses_sb_v4_vendor_json(self):
+        env = AdsEnvironment(
+            client_id="client",
+            client_secret="secret",
+            refresh_token="refresh",
+            profile_id="123",
+            region="NA",
+            marketplace="US",
+        )
+        client = AmazonAdsClient(env)
+        self.assertEqual(
+            client._content_media_type("/sb/v4/campaigns"),
+            "application/vnd.sbcampaignresource.v4+json",
+        )
+        self.assertEqual(
+            client._content_media_type("/sb/v4/adGroups/list"),
+            "application/vnd.sbadgroupresource.v4+json",
+        )
+
+    def test_send_sb_raw_rejects_media_paths_before_network(self):
+        env = AdsEnvironment(
+            client_id="client",
+            client_secret="secret",
+            refresh_token="refresh",
+            profile_id="123",
+            region="NA",
+            marketplace="US",
+        )
+        client = AmazonAdsClient(env)
+        with self.assertRaises(ValueError):
+            client.send_sb_raw(
+                access_token="token",
+                profile_id="123",
+                method="POST",
+                path="/sb/v4/ads/video",
+                payload={},
+            )
+
+    def test_send_sd_raw_rejects_media_paths_before_network(self):
+        env = AdsEnvironment(
+            client_id="client",
+            client_secret="secret",
+            refresh_token="refresh",
+            profile_id="123",
+            region="NA",
+            marketplace="US",
+        )
+        client = AmazonAdsClient(env)
+        with self.assertRaises(ValueError):
+            client.send_sd_raw(
+                access_token="token",
+                profile_id="123",
+                method="POST",
+                path="/sd/creatives",
+                payload={},
+            )
+
+
+class SponsoredBrandsPayloadTests(unittest.TestCase):
+    def test_sb_campaign_filter_uses_v4_shape(self):
+        payload = build_sb_campaigns_filter(
+            campaign_id="1",
+            state_filter="enabled",
+            portfolio_id="p1",
+            name="Brand Core",
+            include_extended_data=True,
+        )
+        self.assertEqual(payload["campaignIdFilter"], {"include": ["1"]})
+        self.assertEqual(payload["stateFilter"], {"include": ["ENABLED"]})
+        self.assertEqual(payload["portfolioIdFilter"], {"include": ["p1"]})
+        self.assertTrue(payload["includeExtendedDataFields"])
+
+    def test_sb_campaign_create_payload_is_flat_v4_without_creative(self):
+        payload = build_sb_campaign_create_payload(
+            name="Brand Core",
+            budget=15.0,
+            budget_type="daily",
+            state="paused",
+            start_date="2026-07-29",
+            brand_entity_id="brand-1",
+            smart_default=("MANUAL",),
+            bid_optimization=False,
+        )
+        self.assertEqual(payload["budget"], 15.0)
+        self.assertEqual(payload["budgetType"], "DAILY")
+        self.assertEqual(payload["state"], "PAUSED")
+        self.assertEqual(payload["smartDefault"], ["MANUAL"])
+        self.assertNotIn("creative", payload)
+        self.assertNotIn("assets", payload)
+
+    def test_sb_campaign_update_and_archive_payloads(self):
+        update = build_sb_campaign_update_payload(
+            "1",
+            budget=12.5,
+            name="New Name",
+            bid_optimization_strategy="MAXIMIZE_IMMEDIATE_SALES",
+        )
+        self.assertEqual(update["campaignId"], "1")
+        self.assertEqual(update["budget"], 12.5)
+        self.assertEqual(update["bidding"]["bidOptimizationStrategy"], "MAXIMIZE_IMMEDIATE_SALES")
+        archive = build_sb_campaign_archive_payload("1")
+        self.assertEqual(archive["campaignIdFilter"]["include"], ["1"])
+
+    def test_sb_ad_group_payloads_have_no_default_bid(self):
+        create = build_sb_ad_group_create_payload("1", "Brand Exact", "enabled")
+        self.assertEqual(create["campaignId"], "1")
+        self.assertEqual(create["state"], "ENABLED")
+        self.assertNotIn("defaultBid", create)
+        update = build_sb_ad_group_update_payload("2", state="paused", name="Paused")
+        self.assertEqual(update["adGroupId"], "2")
+        self.assertEqual(update["state"], "PAUSED")
+        archive = build_sb_ad_group_archive_payload("2")
+        self.assertEqual(archive["adGroupIdFilter"]["include"], ["2"])
+
+    def test_sb_ad_group_filter_uses_v4_shape(self):
+        payload = build_sb_ad_groups_filter(
+            campaign_id="1",
+            ad_group_id="2",
+            state_filter="paused",
+            name="Brand",
+        )
+        self.assertEqual(payload["campaignIdFilter"], {"include": ["1"]})
+        self.assertEqual(payload["adGroupIdFilter"], {"include": ["2"]})
+        self.assertEqual(payload["stateFilter"], {"include": ["PAUSED"]})
+
+    def test_sb_keyword_payloads_use_legacy_lowercase_match_and_state(self):
+        create = build_sb_keyword_create_payload(
+            "1",
+            "2",
+            "ai recorder",
+            "EXACT",
+            bid=0.91,
+        )
+        self.assertEqual(create["matchType"], "exact")
+        self.assertEqual(create["bid"], 0.91)
+        update = build_sb_keyword_update_payload("3", bid=0.92, state="PAUSED")
+        self.assertEqual(update["state"], "paused")
+
+    def test_sb_negative_keyword_match_type_aliases(self):
+        payload = build_sb_negative_keyword_payload(
+            "1",
+            "usb c camera",
+            "NEGATIVE_EXACT",
+            ad_group_id="2",
+        )
+        self.assertEqual(payload["matchType"], "negativeExact")
+        self.assertEqual(payload["adGroupId"], "2")
+
+    def test_sb_target_payloads_use_sb_expression_names(self):
+        expression = normalize_sb_predicates(
+            ("asinPriceBetween=10-20",),
+            asin="B000000001",
+            category_id="123456",
+            brand_refinement_id="brand-node",
+        )
+        self.assertEqual(expression[0]["type"], "asinSameAs")
+        self.assertEqual(expression[1]["type"], "asinCategorySameAs")
+        self.assertEqual(expression[2]["type"], "asinBrandSameAs")
+        payload = build_sb_target_payload("1", "2", expression, bid=0.88)
+        self.assertEqual(payload["state"], "enabled")
+        self.assertEqual(payload["expressionType"], "manual")
+        update = build_sb_target_update_payload("9", bid=0.79, state="paused")
+        self.assertEqual(update["state"], "paused")
+
+    def test_sb_negative_target_payload_has_optional_campaign_scope(self):
+        expression = normalize_sb_predicates((), asin="B000000001")
+        campaign_payload = build_sb_negative_target_payload("1", expression)
+        self.assertNotIn("adGroupId", campaign_payload)
+        ad_group_payload = build_sb_negative_target_payload(
+            "1", expression, ad_group_id="2", expression_type="auto"
+        )
+        self.assertEqual(ad_group_payload["adGroupId"], "2")
+        self.assertEqual(ad_group_payload["expressionType"], "auto")
+
+    def test_sb_legacy_filter_uses_query_shape(self):
+        payload = build_sb_legacy_filter(
+            campaign_id="1",
+            ad_group_id="2",
+            entity_id="3",
+            state_filter="ENABLED",
+            locale="en_US",
+        )
+        self.assertEqual(payload["campaignId"], "1")
+        self.assertEqual(payload["adGroupId"], "2")
+        self.assertEqual(payload["keywordId"], "3")
+        self.assertEqual(payload["state"], "enabled")
+        self.assertEqual(payload["locale"], "en_US")
+        target_payload = build_sb_legacy_filter(entity_id="4", entity_key="targetId")
+        self.assertEqual(target_payload["targetId"], "4")
+        self.assertNotIn("keywordId", target_payload)
+
+    def test_sb_raw_guard_blocks_path_and_payload_media(self):
+        assert_sb_raw_allowed("/sb/v4/campaigns/list", {"maxResults": 10})
+        with self.assertRaises(ValueError):
+            assert_sb_raw_allowed("/sb/v4/ads/list", {})
+        with self.assertRaises(ValueError):
+            assert_sb_raw_allowed("/sb/v4/campaigns", {"creative": {"headline": "x"}})
+
+    def test_sb_report_builders_and_normalizer(self):
+        targeting = build_sb_targeting_report_body("2026-07-01", "2026-07-07", "DAILY")
+        self.assertEqual(targeting["configuration"]["adProduct"], "SPONSORED_BRANDS")
+        self.assertEqual(targeting["configuration"]["reportTypeId"], "sbTargeting")
+        campaigns = build_sb_campaigns_report_body("2026-07-01", "2026-07-07")
+        self.assertNotIn("date", campaigns["configuration"]["columns"])
+        search_terms = build_sb_search_term_report_body("2026-07-01", "2026-07-07")
+        self.assertEqual(search_terms["configuration"]["groupBy"], ["searchTerm"])
+        row = normalize_sb_report_row({"campaignId": 1, "impressions": "7", "cost": "1.23"})
+        self.assertEqual(row["campaignId"], "1")
+        self.assertEqual(row["impressions"], 7)
+        self.assertEqual(row["cost"], 1.23)
+
+
+class SponsoredDisplayPayloadTests(unittest.TestCase):
+    def test_sd_campaign_payloads_use_sd_dates_and_lowercase_state(self):
+        create = build_sd_campaign_create_payload(
+            name="SD Retargeting",
+            budget=18.5,
+            start_date="2026-07-29",
+            end_date="2026-08-01",
+            state="PAUSED",
+        )
+        self.assertEqual(create["budget"], "18.50")
+        self.assertEqual(create["startDate"], "20260729")
+        self.assertEqual(create["endDate"], "20260801")
+        self.assertEqual(create["state"], "paused")
+        update = build_sd_campaign_update_payload("1", budget=20, name="New SD")
+        self.assertEqual(update["campaignId"], "1")
+        self.assertEqual(update["budget"], "20.00")
+        self.assertEqual(update["name"], "New SD")
+
+    def test_sd_ad_group_product_ad_and_target_payloads(self):
+        ad_group = build_sd_ad_group_create_payload("1", "SD Core", 0.72, "clicks", "enabled")
+        self.assertEqual(ad_group["campaignId"], "1")
+        self.assertEqual(ad_group["defaultBid"], 0.72)
+        self.assertEqual(ad_group["state"], "enabled")
+
+        product_ad = build_sd_product_ad_create_payload(
+            "1",
+            "2",
+            ad_name="SD Product",
+            sku="SKU-1",
+            state="paused",
+        )
+        self.assertEqual(product_ad["sku"], "SKU-1")
+        self.assertNotIn("creative", product_ad)
+        self.assertNotIn("assets", product_ad)
+
+        expression = normalize_sd_predicates(
+            ("asinPriceBetween=10-20",),
+            asin="B000000001",
+            audience_id="aud-1",
+        )
+        self.assertEqual(expression[0]["type"], "asinSameAs")
+        self.assertEqual(expression[1]["type"], "audience")
+        target = build_sd_target_payload("2", expression, bid=0.88)
+        self.assertEqual(target["adGroupId"], "2")
+        self.assertEqual(target["bid"], "0.88")
+        self.assertEqual(target["state"], "paused")
+
+    def test_sd_query_budget_rule_and_association_payloads(self):
+        query = build_sd_query_filter(
+            campaign_id="1",
+            ad_group_id="2",
+            entity_id="3",
+            state_filter="ENABLED",
+            tactic="T00030",
+            max_results=25,
+        )
+        self.assertEqual(query["campaignIdFilter"], "1")
+        self.assertEqual(query["adGroupIdFilter"], "2")
+        self.assertEqual(query["targetIdFilter"], "3")
+        self.assertEqual(query["stateFilter"], "enabled")
+        self.assertEqual(query["pageSize"], "25")
+
+        rule = build_sd_budget_rule_create_payload(
+            name="Prime Day",
+            rule_type="schedule",
+            increase_type="percent",
+            increase_value=20,
+            start_date="2026-07-29",
+        )
+        detail = rule["budgetRulesDetails"][0]
+        self.assertEqual(detail["ruleType"], "SCHEDULE")
+        self.assertEqual(detail["duration"]["dateRangeTypeRuleDuration"]["startDate"], "20260729")
+        self.assertEqual(
+            build_sd_budget_rule_association_payload("rule-1"),
+            {"budgetRuleIds": ["rule-1"]},
+        )
+
+    def test_sd_raw_guard_blocks_media_paths_and_payload_keys(self):
+        assert_sd_raw_allowed("/sd/campaigns", [{"name": "x"}])
+        with self.assertRaises(ValueError):
+            assert_sd_raw_allowed("/sd/creatives", {})
+        with self.assertRaises(ValueError):
+            assert_sd_raw_allowed("/sd/campaigns", {"brandLogoAssetId": "asset-1"})
+
+    def test_sd_report_builders_and_normalizer(self):
+        targeting = build_sd_targeting_report_body("2026-07-01", "2026-07-07", "DAILY")
+        self.assertEqual(targeting["configuration"]["adProduct"], "SPONSORED_DISPLAY")
+        self.assertEqual(targeting["configuration"]["reportTypeId"], "sdTargeting")
+        campaigns = build_sd_campaigns_report_body("2026-07-01", "2026-07-07")
+        self.assertNotIn("date", campaigns["configuration"]["columns"])
+        row = normalize_sd_report_row({"campaignId": 1, "impressions": "7", "cost": "1.23"})
+        self.assertEqual(row["campaignId"], "1")
+        self.assertEqual(row["impressions"], 7)
+        self.assertEqual(row["cost"], 1.23)
 
 
 class ProfileResolutionTests(unittest.TestCase):
