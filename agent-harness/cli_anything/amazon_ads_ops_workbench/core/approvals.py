@@ -46,11 +46,18 @@ def count_changes(payload: dict[str, Any]) -> int:
         "adGroups",
         "keywords",
         "productAds",
+        "targets",
         "targetingClauses",
+        "locations",
         "negativeKeywords",
         "campaignNegativeKeywords",
         "negativeTargetingClauses",
         "campaignNegativeTargetingClauses",
+        "budgetRulesDetails",
+        "budgetRuleIds",
+        "campaignIds",
+        "campaignIdFilter",
+        "adGroupIdFilter",
     )
     total = 0
     for key in preferred_keys:
@@ -63,9 +70,13 @@ def count_changes(payload: dict[str, Any]) -> int:
 
 
 def operation_risk_level(operation: str) -> str:
-    if operation.startswith("sp-raw."):
+    if (
+        operation.startswith("sp-raw.")
+        or operation.startswith("sb-raw.")
+        or operation.startswith("sd-raw.")
+    ):
         return "critical"
-    if any(token in operation for token in ("set-state", "edit", "add", "create")):
+    if any(token in operation for token in ("set-state", "edit", "add", "create", "archive")):
         return "high"
     return "medium"
 
