@@ -7,6 +7,8 @@ from typing import Any
 from urllib import error, parse, request
 
 from .env import AdsEnvironment, get_region_base_url
+from .sponsored_brands import assert_sb_raw_allowed
+from .sponsored_display import assert_sd_raw_allowed
 
 
 class AmazonAdsClient:
@@ -48,6 +50,59 @@ class AmazonAdsClient:
     def list_campaigns(self, access_token: str, profile_id: str) -> list[dict[str, Any]]:
         return self._paginate_campaigns("/sp/campaigns/list", access_token, profile_id)
 
+    def list_sb_campaigns(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return self._post_list("/sb/v4/campaigns/list", access_token, profile_id, payload)
+
+    def create_sb_campaign(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sb/v4/campaigns",
+            "POST",
+            access_token,
+            profile_id,
+            self._wrap_campaign_payload(payload),
+            "Create SB campaign",
+        )
+
+    def edit_sb_campaign(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sb/v4/campaigns",
+            "PUT",
+            access_token,
+            profile_id,
+            self._wrap_campaign_payload(payload),
+            "Edit SB campaign",
+        )
+
+    def archive_sb_campaign(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sb/v4/campaigns/delete",
+            "POST",
+            access_token,
+            profile_id,
+            payload,
+            "Archive SB campaign",
+        )
+
     def create_campaign(
         self,
         access_token: str,
@@ -78,6 +133,48 @@ class AmazonAdsClient:
             profile_id,
             body,
             "Edit campaign",
+        )
+
+    def list_sd_campaigns(
+        self,
+        access_token: str,
+        profile_id: str,
+        query: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return self._get_list("/sd/campaigns", access_token, profile_id, query, "SD campaigns list")
+
+    def create_sd_campaign(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/campaigns",
+            "POST",
+            access_token,
+            profile_id,
+            payload.get("campaigns") if "campaigns" in payload else [payload],
+            "Create SD campaign",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def edit_sd_campaign(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/campaigns",
+            "PUT",
+            access_token,
+            profile_id,
+            payload.get("campaigns") if "campaigns" in payload else [payload],
+            "Edit SD campaign",
+            accept="application/json",
+            content_type="application/json",
         )
 
     def list_portfolios(self, access_token: str, profile_id: str) -> list[dict[str, Any]]:
@@ -138,6 +235,59 @@ class AmazonAdsClient:
     ) -> list[dict[str, Any]]:
         return self._post_list("/sp/adGroups/list", access_token, profile_id, payload)
 
+    def list_sb_ad_groups(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return self._post_list("/sb/v4/adGroups/list", access_token, profile_id, payload)
+
+    def create_sb_ad_group(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sb/v4/adGroups",
+            "POST",
+            access_token,
+            profile_id,
+            self._wrap_ad_group_payload(payload),
+            "Create SB ad group",
+        )
+
+    def edit_sb_ad_group(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sb/v4/adGroups",
+            "PUT",
+            access_token,
+            profile_id,
+            self._wrap_ad_group_payload(payload),
+            "Edit SB ad group",
+        )
+
+    def archive_sb_ad_group(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_mutation(
+            "/sb/v4/adGroups/delete",
+            "POST",
+            access_token,
+            profile_id,
+            payload,
+            "Archive SB ad group",
+        )
+
     def create_ad_group(
         self,
         access_token: str,
@@ -168,6 +318,48 @@ class AmazonAdsClient:
             "Edit ad group",
         )
 
+    def list_sd_ad_groups(
+        self,
+        access_token: str,
+        profile_id: str,
+        query: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return self._get_list("/sd/adGroups", access_token, profile_id, query, "SD ad groups list")
+
+    def create_sd_ad_group(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/adGroups",
+            "POST",
+            access_token,
+            profile_id,
+            payload.get("adGroups") if "adGroups" in payload else [payload],
+            "Create SD ad group",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def edit_sd_ad_group(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/adGroups",
+            "PUT",
+            access_token,
+            profile_id,
+            payload.get("adGroups") if "adGroups" in payload else [payload],
+            "Edit SD ad group",
+            accept="application/json",
+            content_type="application/json",
+        )
+
     def list_keywords(
         self,
         access_token: str,
@@ -175,6 +367,71 @@ class AmazonAdsClient:
         payload: dict[str, Any],
     ) -> list[dict[str, Any]]:
         return self._post_list("/sp/keywords/list", access_token, profile_id, payload)
+
+    def list_sb_keywords(
+        self,
+        access_token: str,
+        profile_id: str,
+        query: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return self._get_list(
+            "/sb/keywords",
+            access_token,
+            profile_id,
+            query,
+            "SB keywords list",
+            accept="application/vnd.sbkeyword.v3+json",
+        )
+
+    def create_sb_keyword(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sb/keywords",
+            "POST",
+            access_token,
+            profile_id,
+            payload.get("keywords") if "keywords" in payload else [payload],
+            "Create SB keyword",
+            content_type="application/json",
+            accept="application/vnd.sbkeywordresponse.v3+json",
+        )
+
+    def edit_sb_keyword(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sb/keywords",
+            "PUT",
+            access_token,
+            profile_id,
+            payload.get("keywords") if "keywords" in payload else [payload],
+            "Edit SB keyword",
+            content_type="application/json",
+            accept="application/vnd.sbkeywordresponse.v3+json",
+        )
+
+    def archive_sb_keyword(
+        self,
+        access_token: str,
+        profile_id: str,
+        keyword_id: str,
+    ) -> Any:
+        return self._send_request_json(
+            f"/sb/keywords/{keyword_id}",
+            "DELETE",
+            access_token,
+            profile_id,
+            None,
+            "Archive SB keyword",
+            accept="application/json",
+        )
 
     def create_keyword(
         self,
@@ -219,6 +476,71 @@ class AmazonAdsClient:
     ) -> list[dict[str, Any]]:
         return self._post_list("/sp/negativeKeywords/list", access_token, profile_id, payload)
 
+    def list_sb_negative_keywords(
+        self,
+        access_token: str,
+        profile_id: str,
+        query: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return self._get_list(
+            "/sb/negativeKeywords",
+            access_token,
+            profile_id,
+            query,
+            "SB negative keywords list",
+            accept="application/vnd.sbnegativekeyword.v3+json",
+        )
+
+    def create_sb_negative_keyword(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sb/negativeKeywords",
+            "POST",
+            access_token,
+            profile_id,
+            payload.get("negativeKeywords") if "negativeKeywords" in payload else [payload],
+            "Create SB negative keyword",
+            content_type="application/json",
+            accept="application/vnd.sbnegativekeywordresponse.v3+json",
+        )
+
+    def edit_sb_negative_keyword(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sb/negativeKeywords",
+            "PUT",
+            access_token,
+            profile_id,
+            payload.get("negativeKeywords") if "negativeKeywords" in payload else [payload],
+            "Edit SB negative keyword",
+            content_type="application/json",
+            accept="application/vnd.sbnegativekeywordresponse.v3+json",
+        )
+
+    def archive_sb_negative_keyword(
+        self,
+        access_token: str,
+        profile_id: str,
+        keyword_id: str,
+    ) -> Any:
+        return self._send_request_json(
+            f"/sb/negativeKeywords/{keyword_id}",
+            "DELETE",
+            access_token,
+            profile_id,
+            None,
+            "Archive SB negative keyword",
+            accept="application/json",
+        )
+
     def list_product_ads(
         self,
         access_token: str,
@@ -257,6 +579,48 @@ class AmazonAdsClient:
             "Edit product ad",
         )
 
+    def list_sd_product_ads(
+        self,
+        access_token: str,
+        profile_id: str,
+        query: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return self._get_list("/sd/productAds", access_token, profile_id, query, "SD product ads list")
+
+    def create_sd_product_ad(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/productAds",
+            "POST",
+            access_token,
+            profile_id,
+            payload.get("productAds") if "productAds" in payload else [payload],
+            "Create SD product ad",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def edit_sd_product_ad(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/productAds",
+            "PUT",
+            access_token,
+            profile_id,
+            payload.get("productAds") if "productAds" in payload else [payload],
+            "Edit SD product ad",
+            accept="application/json",
+            content_type="application/json",
+        )
+
     def list_targets(
         self,
         access_token: str,
@@ -264,6 +628,71 @@ class AmazonAdsClient:
         payload: dict[str, Any],
     ) -> list[dict[str, Any]]:
         return self._post_list("/sp/targets/list", access_token, profile_id, payload)
+
+    def list_sb_targets(
+        self,
+        access_token: str,
+        profile_id: str,
+        query: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return self._get_list(
+            "/sb/targets",
+            access_token,
+            profile_id,
+            query,
+            "SB targets list",
+            accept="application/vnd.sbtargeting.v3+json",
+        )
+
+    def create_sb_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sb/targets",
+            "POST",
+            access_token,
+            profile_id,
+            payload.get("targets") if "targets" in payload else [payload],
+            "Create SB target",
+            content_type="application/json",
+            accept="application/vnd.sbtargetingresponse.v3+json",
+        )
+
+    def edit_sb_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sb/targets",
+            "PUT",
+            access_token,
+            profile_id,
+            payload.get("targets") if "targets" in payload else [payload],
+            "Edit SB target",
+            content_type="application/json",
+            accept="application/vnd.sbtargetingresponse.v3+json",
+        )
+
+    def archive_sb_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        target_id: str,
+    ) -> Any:
+        return self._send_request_json(
+            f"/sb/targets/{target_id}",
+            "DELETE",
+            access_token,
+            profile_id,
+            None,
+            "Archive SB target",
+            accept="application/json",
+        )
 
     def create_target(
         self,
@@ -295,6 +724,124 @@ class AmazonAdsClient:
             "Edit target",
         )
 
+    def list_sd_targets(
+        self,
+        access_token: str,
+        profile_id: str,
+        query: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return self._get_list("/sd/targets", access_token, profile_id, query, "SD targets list")
+
+    def create_sd_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/targets",
+            "POST",
+            access_token,
+            profile_id,
+            payload.get("targets") if "targets" in payload else [payload],
+            "Create SD target",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def edit_sd_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/targets",
+            "PUT",
+            access_token,
+            profile_id,
+            payload.get("targets") if "targets" in payload else [payload],
+            "Edit SD target",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def list_sd_locations(
+        self,
+        access_token: str,
+        profile_id: str,
+        query: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return self._get_list("/sd/locations", access_token, profile_id, query, "SD locations list")
+
+    def create_sd_location(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/locations",
+            "POST",
+            access_token,
+            profile_id,
+            payload.get("locations") if "locations" in payload else [payload],
+            "Create SD location target",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def edit_sd_location(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/locations",
+            "PUT",
+            access_token,
+            profile_id,
+            payload.get("locations") if "locations" in payload else [payload],
+            "Edit SD location target",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def sd_audience_taxonomy(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/audiences/taxonomy/list",
+            "POST",
+            access_token,
+            profile_id,
+            payload,
+            "SD audience taxonomy",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def sd_audience_discovery(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/audiences/list",
+            "POST",
+            access_token,
+            profile_id,
+            payload,
+            "SD audience discovery",
+            accept="application/json",
+            content_type="application/json",
+        )
+
     def list_negative_targets(
         self,
         access_token: str,
@@ -302,6 +849,71 @@ class AmazonAdsClient:
         payload: dict[str, Any],
     ) -> list[dict[str, Any]]:
         return self._post_list("/sp/negativeTargets/list", access_token, profile_id, payload)
+
+    def list_sb_negative_targets(
+        self,
+        access_token: str,
+        profile_id: str,
+        query: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return self._get_list(
+            "/sb/negativeTargets",
+            access_token,
+            profile_id,
+            query,
+            "SB negative targets list",
+            accept="application/vnd.sbtargeting.v3+json",
+        )
+
+    def create_sb_negative_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sb/negativeTargets",
+            "POST",
+            access_token,
+            profile_id,
+            payload.get("negativeTargets") if "negativeTargets" in payload else [payload],
+            "Create SB negative target",
+            content_type="application/json",
+            accept="application/vnd.sbtargetingresponse.v3+json",
+        )
+
+    def edit_sb_negative_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sb/negativeTargets",
+            "PUT",
+            access_token,
+            profile_id,
+            payload.get("negativeTargets") if "negativeTargets" in payload else [payload],
+            "Edit SB negative target",
+            content_type="application/json",
+            accept="application/vnd.sbtargetingresponse.v3+json",
+        )
+
+    def archive_sb_negative_target(
+        self,
+        access_token: str,
+        profile_id: str,
+        target_id: str,
+    ) -> Any:
+        return self._send_request_json(
+            f"/sb/negativeTargets/{target_id}",
+            "DELETE",
+            access_token,
+            profile_id,
+            None,
+            "Archive SB negative target",
+            accept="application/json",
+        )
 
     def create_negative_target(
         self,
@@ -469,6 +1081,203 @@ class AmazonAdsClient:
             "Edit campaign negative target",
         )
 
+    def list_sd_budget_rules(
+        self,
+        access_token: str,
+        profile_id: str,
+        query: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return self._get_list("/sd/budgetRules", access_token, profile_id, query, "SD budget rules list")
+
+    def get_sd_budget_rule(
+        self,
+        access_token: str,
+        profile_id: str,
+        rule_id: str,
+    ) -> Any:
+        return self._send_request_json(
+            f"/sd/budgetRules/{rule_id}",
+            "GET",
+            access_token,
+            profile_id,
+            None,
+            "Get SD budget rule",
+            accept="application/json",
+        )
+
+    def create_sd_budget_rule(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/budgetRules",
+            "POST",
+            access_token,
+            profile_id,
+            payload,
+            "Create SD budget rule",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def update_sd_budget_rule(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/budgetRules",
+            "PUT",
+            access_token,
+            profile_id,
+            payload,
+            "Update SD budget rule",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def associate_sd_budget_rule(
+        self,
+        access_token: str,
+        profile_id: str,
+        campaign_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            f"/sd/campaigns/{campaign_id}/budgetRules",
+            "POST",
+            access_token,
+            profile_id,
+            payload,
+            "Associate SD budget rule",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def disassociate_sd_budget_rule(
+        self,
+        access_token: str,
+        profile_id: str,
+        campaign_id: str,
+        rule_id: str,
+    ) -> Any:
+        return self._send_request_json(
+            f"/sd/campaigns/{campaign_id}/budgetRules/{rule_id}",
+            "DELETE",
+            access_token,
+            profile_id,
+            None,
+            "Disassociate SD budget rule",
+            accept="application/json",
+        )
+
+    def list_sd_budget_rule_campaigns(
+        self,
+        access_token: str,
+        profile_id: str,
+        rule_id: str,
+        query: dict[str, str],
+    ) -> Any:
+        query_string = parse.urlencode({key: value for key, value in query.items() if value})
+        path = f"/sd/budgetRules/{rule_id}/campaigns"
+        if query_string:
+            path = f"{path}?{query_string}"
+        return self._send_request_json(
+            path,
+            "GET",
+            access_token,
+            profile_id,
+            None,
+            "List SD budget rule campaigns",
+            accept="application/json",
+        )
+
+    def list_sd_campaign_budget_rules(
+        self,
+        access_token: str,
+        profile_id: str,
+        campaign_id: str,
+    ) -> Any:
+        return self._send_request_json(
+            f"/sd/campaigns/{campaign_id}/budgetRules",
+            "GET",
+            access_token,
+            profile_id,
+            None,
+            "List SD campaign budget rules",
+            accept="application/json",
+        )
+
+    def sd_budget_usage(
+        self,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            "/sd/campaigns/budget/usage",
+            "POST",
+            access_token,
+            profile_id,
+            payload,
+            "SD budget usage",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def request_sd_snapshot(
+        self,
+        access_token: str,
+        profile_id: str,
+        record_type: str,
+        payload: dict[str, Any],
+    ) -> Any:
+        return self._send_request_json(
+            f"/sd/{record_type}/snapshot",
+            "POST",
+            access_token,
+            profile_id,
+            payload,
+            "Request SD snapshot",
+            accept="application/json",
+            content_type="application/json",
+        )
+
+    def get_sd_snapshot(
+        self,
+        access_token: str,
+        profile_id: str,
+        snapshot_id: str,
+    ) -> Any:
+        return self._send_request_json(
+            f"/sd/snapshots/{snapshot_id}",
+            "GET",
+            access_token,
+            profile_id,
+            None,
+            "Get SD snapshot",
+            accept="application/json",
+        )
+
+    def download_sd_snapshot(
+        self,
+        access_token: str,
+        profile_id: str,
+        snapshot_id: str,
+    ) -> Any:
+        return self._send_request_json(
+            f"/sd/snapshots/{snapshot_id}/download",
+            "GET",
+            access_token,
+            profile_id,
+            None,
+            "Download SD snapshot",
+            accept="application/json",
+        )
+
     def send_sp_raw(
         self,
         access_token: str,
@@ -501,6 +1310,52 @@ class AmazonAdsClient:
             headers=headers,
         )
         return self._send_json(req, f"Raw SP request {normalized_method} {path}")
+
+    def send_sd_raw(
+        self,
+        access_token: str,
+        profile_id: str,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | list[Any] | None = None,
+        accept: str | None = None,
+        content_type: str | None = None,
+    ) -> Any:
+        assert_sd_raw_allowed(path, payload)
+        normalized_method = method.upper()
+        return self._send_request_json(
+            path,
+            normalized_method,
+            access_token,
+            profile_id,
+            payload,
+            f"Raw SD request {normalized_method} {path}",
+            accept=accept,
+            content_type=content_type,
+        )
+
+    def send_sb_raw(
+        self,
+        access_token: str,
+        profile_id: str,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | list[Any] | None = None,
+        accept: str | None = None,
+        content_type: str | None = None,
+    ) -> Any:
+        assert_sb_raw_allowed(path, payload)
+        normalized_method = method.upper()
+        return self._send_request_json(
+            path,
+            normalized_method,
+            access_token,
+            profile_id,
+            payload,
+            f"Raw SB request {normalized_method} {path}",
+            accept=accept,
+            content_type=content_type,
+        )
 
     def create_report(
         self,
@@ -624,6 +1479,7 @@ class AmazonAdsClient:
             return [item for item in data if isinstance(item, dict)]
         if isinstance(data, dict):
             for key in (
+                "campaigns",
                 "adGroups",
                 "keywords",
                 "negativeKeywords",
@@ -633,6 +1489,60 @@ class AmazonAdsClient:
                 "negativeTargetingClauses",
                 "campaignNegativeTargetingClauses",
                 "portfolios",
+                "budgetRulesDetails",
+                "budgetRules",
+                "locations",
+                "audiences",
+                "snapshots",
+                "results",
+                "items",
+            ):
+                candidate = data.get(key)
+                if isinstance(candidate, list):
+                    return [item for item in candidate if isinstance(item, dict)]
+        return []
+
+    def _get_list(
+        self,
+        path: str,
+        access_token: str,
+        profile_id: str,
+        query: dict[str, str],
+        label: str,
+        accept: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query_string = parse.urlencode(
+            {key: value for key, value in query.items() if value}
+        )
+        url = f"{get_region_base_url(self.env.region)}{path}"
+        if query_string:
+            url = f"{url}?{query_string}"
+        headers = {
+            **self._build_headers(access_token, accept_path=path),
+            "Amazon-Advertising-API-Scope": profile_id,
+        }
+        if accept:
+            headers["Accept"] = accept
+        req = request.Request(url, method="GET", headers=headers)
+        data = self._send_json(req, label)
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        if isinstance(data, dict):
+            for key in (
+                "campaigns",
+                "adGroups",
+                "keywords",
+                "negativeKeywords",
+                "targets",
+                "negativeTargets",
+                "targetingClauses",
+                "negativeTargetingClauses",
+                "productAds",
+                "budgetRulesDetails",
+                "budgetRules",
+                "locations",
+                "audiences",
+                "taxonomies",
                 "results",
                 "items",
             ):
@@ -659,6 +1569,37 @@ class AmazonAdsClient:
                 "Content-Type": self._content_media_type(path),
                 "Amazon-Advertising-API-Scope": profile_id,
             },
+        )
+        return self._send_json(req, label)
+
+    def _send_request_json(
+        self,
+        path: str,
+        method: str,
+        access_token: str,
+        profile_id: str,
+        payload: dict[str, Any] | list[Any] | None,
+        label: str,
+        accept: str | None = None,
+        content_type: str | None = None,
+    ) -> Any:
+        data = None
+        headers = {
+            **self._build_headers(access_token, accept_path=path),
+            "Amazon-Advertising-API-Scope": profile_id,
+        }
+        if accept:
+            headers["Accept"] = accept
+        if payload is not None:
+            data = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = content_type or self._content_media_type(path)
+        elif content_type:
+            headers["Content-Type"] = content_type
+        req = request.Request(
+            f"{get_region_base_url(self.env.region)}{path}",
+            method=method,
+            data=data,
+            headers=headers,
         )
         return self._send_json(req, label)
 
@@ -696,6 +1637,13 @@ class AmazonAdsClient:
             "/sp/campaignNegativeKeywords": "application/vnd.spcampaignnegativekeyword.v3+json",
             "/sp/campaignNegativeTargets/list": "application/vnd.spcampaignnegativetargetingclause.v3+json",
             "/sp/campaignNegativeTargets": "application/vnd.spcampaignnegativetargetingclause.v3+json",
+            "/sb/v4/campaigns/list": "application/vnd.sbcampaignresource.v4+json",
+            "/sb/v4/campaigns": "application/vnd.sbcampaignresource.v4+json",
+            "/sb/v4/campaigns/delete": "application/vnd.sbcampaignresource.v4+json",
+            "/sb/v4/adGroups/list": "application/vnd.sbadgroupresource.v4+json",
+            "/sb/v4/adGroups": "application/vnd.sbadgroupresource.v4+json",
+            "/sb/v4/adGroups/delete": "application/vnd.sbadgroupresource.v4+json",
+            "/sb/targets/products/count": "application/vnd.sbtargeting.v4+json",
         }
         return media_types.get(path or "", "")
 
