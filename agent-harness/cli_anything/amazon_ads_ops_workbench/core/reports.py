@@ -111,6 +111,318 @@ def build_sp_search_term_report_body(
     }
 
 
+def build_sb_campaigns_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    columns = [
+        "date",
+        "campaignId",
+        "campaignName",
+        "campaignStatus",
+        "impressions",
+        "clicks",
+        "cost",
+        "purchases",
+        "sales",
+    ]
+    return build_sb_report_body(
+        name=f"sb-campaigns-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="sbCampaigns",
+        group_by=["campaign"],
+        columns=columns,
+        time_unit=time_unit,
+    )
+
+
+def build_sb_ad_groups_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    columns = [
+        "date",
+        "campaignId",
+        "campaignName",
+        "adGroupId",
+        "adGroupName",
+        "impressions",
+        "clicks",
+        "cost",
+        "purchases",
+        "sales",
+    ]
+    return build_sb_report_body(
+        name=f"sb-ad-groups-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="sbAdGroups",
+        group_by=["adGroup"],
+        columns=columns,
+        time_unit=time_unit,
+    )
+
+
+def build_sb_targeting_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    columns = [
+        "date",
+        "campaignId",
+        "campaignName",
+        "adGroupId",
+        "adGroupName",
+        "targetingId",
+        "targetingText",
+        "targetingType",
+        "impressions",
+        "clicks",
+        "cost",
+        "purchases",
+        "sales",
+    ]
+    return build_sb_report_body(
+        name=f"sb-targeting-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="sbTargeting",
+        group_by=["targeting"],
+        columns=columns,
+        time_unit=time_unit,
+    )
+
+
+def build_sb_search_term_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    columns = [
+        "date",
+        "campaignId",
+        "campaignName",
+        "adGroupId",
+        "adGroupName",
+        "searchTerm",
+        "impressions",
+        "clicks",
+        "cost",
+        "purchases",
+        "sales",
+    ]
+    return build_sb_report_body(
+        name=f"sb-search-terms-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="sbSearchTerm",
+        group_by=["searchTerm"],
+        columns=columns,
+        time_unit=time_unit,
+    )
+
+
+def build_sb_campaign_placement_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    columns = [
+        "date",
+        "campaignId",
+        "campaignName",
+        "campaignStatus",
+        "placementClassification",
+        "impressions",
+        "clicks",
+        "cost",
+        "purchases",
+        "sales",
+    ]
+    return build_sb_report_body(
+        name=f"sb-campaign-placement-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="sbCampaigns",
+        group_by=["campaignPlacement"],
+        columns=columns,
+        time_unit=time_unit,
+    )
+
+
+def build_sb_report_body(
+    name: str,
+    start_date: str,
+    end_date: str,
+    report_type_id: str,
+    group_by: list[str],
+    columns: list[str],
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    normalized_time_unit = time_unit.upper()
+    normalized_columns = list(columns)
+    if normalized_time_unit == "SUMMARY":
+        normalized_columns = [column for column in normalized_columns if column != "date"]
+    return {
+        "name": name,
+        "startDate": start_date,
+        "endDate": end_date,
+        "configuration": {
+            "adProduct": "SPONSORED_BRANDS",
+            "groupBy": group_by,
+            "columns": normalized_columns,
+            "reportTypeId": report_type_id,
+            "timeUnit": normalized_time_unit,
+            "format": "GZIP_JSON",
+        },
+    }
+
+
+def build_sd_campaigns_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    return build_sd_report_body(
+        name=f"sd-campaigns-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="sdCampaigns",
+        group_by=["campaign"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "campaignStatus",
+            "impressions",
+            "clicks",
+            "cost",
+            "purchases",
+            "sales",
+        ],
+        time_unit=time_unit,
+    )
+
+
+def build_sd_ad_groups_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    return build_sd_report_body(
+        name=f"sd-ad-groups-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="sdAdGroups",
+        group_by=["adGroup"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "adGroupId",
+            "adGroupName",
+            "impressions",
+            "clicks",
+            "cost",
+            "purchases",
+            "sales",
+        ],
+        time_unit=time_unit,
+    )
+
+
+def build_sd_product_ads_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    return build_sd_report_body(
+        name=f"sd-product-ads-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="sdProductAds",
+        group_by=["productAd"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "adGroupId",
+            "adGroupName",
+            "adId",
+            "asin",
+            "sku",
+            "impressions",
+            "clicks",
+            "cost",
+            "purchases",
+            "sales",
+        ],
+        time_unit=time_unit,
+    )
+
+
+def build_sd_targeting_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    return build_sd_report_body(
+        name=f"sd-targeting-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="sdTargeting",
+        group_by=["targeting"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "adGroupId",
+            "adGroupName",
+            "targetId",
+            "targetingText",
+            "targetingType",
+            "impressions",
+            "clicks",
+            "cost",
+            "purchases",
+            "sales",
+        ],
+        time_unit=time_unit,
+    )
+
+
+def build_sd_report_body(
+    name: str,
+    start_date: str,
+    end_date: str,
+    report_type_id: str,
+    group_by: list[str],
+    columns: list[str],
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    normalized_time_unit = time_unit.upper()
+    normalized_columns = list(columns)
+    if normalized_time_unit == "SUMMARY":
+        normalized_columns = [column for column in normalized_columns if column != "date"]
+    return {
+        "name": name,
+        "startDate": start_date,
+        "endDate": end_date,
+        "configuration": {
+            "adProduct": "SPONSORED_DISPLAY",
+            "groupBy": group_by,
+            "columns": normalized_columns,
+            "reportTypeId": report_type_id,
+            "timeUnit": normalized_time_unit,
+            "format": "GZIP_JSON",
+        },
+    }
+
+
 def build_download_target_path(output_dir: str, report_id: str, report_type: str) -> str:
     filename = f"{report_type}-{report_id}.json"
     return os.path.join(output_dir, filename)
@@ -185,6 +497,41 @@ def normalize_sp_campaign_placement_report_row(row: dict[str, Any]) -> dict[str,
         "sales30d": _as_float(row.get("sales30d")),
         "topOfSearchImpressionShare": _as_float(row.get("topOfSearchImpressionShare")),
     }
+
+
+def normalize_sb_report_row(row: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, value in row.items():
+        if key in {"impressions", "clicks"}:
+            normalized[key] = _as_int(value)
+        elif key in {"cost", "purchases", "sales", "unitsSold", "viewableImpressions"}:
+            normalized[key] = _as_float(value)
+        elif key.endswith("Id") or key in {"campaignId", "adGroupId", "targetingId"}:
+            normalized[key] = "" if value is None else str(value)
+        else:
+            normalized[key] = value
+    return normalized
+
+
+def normalize_sd_report_row(row: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, value in row.items():
+        if key in {"impressions", "clicks"}:
+            normalized[key] = _as_int(value)
+        elif key in {
+            "cost",
+            "purchases",
+            "sales",
+            "unitsSold",
+            "viewableImpressions",
+            "detailPageViews",
+        }:
+            normalized[key] = _as_float(value)
+        elif key.endswith("Id") or key in {"campaignId", "adGroupId", "targetId", "adId"}:
+            normalized[key] = "" if value is None else str(value)
+        else:
+            normalized[key] = value
+    return normalized
 
 
 def load_report_rows(input_file: str) -> list[dict[str, Any]]:
