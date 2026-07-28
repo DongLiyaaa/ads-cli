@@ -31,6 +31,10 @@ class CliE2ETests(unittest.TestCase):
         "AMAZON_ADS_PROFILE_ID": "",
         "AMAZON_ADS_REGION": "NA",
         "AMAZON_ADS_MARKETPLACE": "US",
+        "AMAZON_ADS_APPROVAL_DIR": os.path.join(
+            tempfile.gettempdir(),
+            "amazon_ads_ops_workbench_test_approvals",
+        ),
     }
 
     def _run(self, args, extra_env=None):
@@ -47,6 +51,20 @@ class CliE2ETests(unittest.TestCase):
             text=True,
             env=env,
         )
+
+    def _assert_approval_plan(self, result, operation):
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["meta"]["mode"], "approval-plan")
+        self.assertEqual(payload["meta"]["status"], "awaiting_user_confirmation")
+        self.assertEqual(payload["meta"]["operation"], operation)
+        self.assertEqual(
+            payload["meta"]["confirmationPrompt"],
+            "是否执行？执行请回复“确认”，不执行则无需回复！",
+        )
+        self.assertTrue(payload["meta"]["planId"])
+        self.assertIn("payloadHash", payload["data"])
+        return payload
 
     def test_help(self):
         result = self._run(["--help"])
@@ -160,10 +178,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "negatives.add-ad-group")
 
     def test_keywords_edit_bid_without_credentials(self):
         result = self._run(
@@ -182,10 +197,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "keywords.edit-bid")
 
     def test_portfolios_list_without_credentials(self):
         result = self._run(
@@ -220,10 +232,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "campaigns.set-state")
 
     def test_campaigns_edit_budget_without_credentials(self):
         result = self._run(
@@ -238,10 +247,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "campaigns.edit-budget")
 
     def test_campaigns_set_state_dry_run(self):
         result = self._run(
@@ -353,11 +359,8 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
-        self.assertEqual(payload["data"]["requested"]["topOfSearch"], 50)
+        payload = self._assert_approval_plan(result, "campaigns.edit-placement-bids")
+        self.assertEqual(payload["data"]["placementPolicy"], "user_supplied_percentages_only")
 
     def test_campaigns_edit_placement_bids_requires_user_value(self):
         result = self._run(
@@ -770,10 +773,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "keywords.set-state")
 
     def test_negatives_add_campaign_without_credentials(self):
         result = self._run(
@@ -790,10 +790,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "negatives.add-campaign")
 
     def test_negatives_add_ad_group_dry_run(self):
         result = self._run(
@@ -874,10 +871,7 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["meta"]["mode"], "mock")
-        self.assertIn("missingCredentials", payload["meta"])
+        self._assert_approval_plan(result, "negatives.set-state")
 
     def test_negative_targets_list_without_credentials(self):
         result = self._run(
@@ -995,7 +989,7 @@ class CliE2ETests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must start with /sp/", result.stderr)
 
-    def test_sp_raw_request_requires_confirm_submit_for_live(self):
+    def test_sp_raw_request_without_confirm_creates_approval_plan(self):
         result = self._run(
             [
                 "--json",
@@ -1010,8 +1004,86 @@ class CliE2ETests(unittest.TestCase):
             ],
             extra_env=self.BLANK_ENV,
         )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("require --confirm-submit", result.stderr)
+        payload = self._assert_approval_plan(result, "sp-raw.request")
+        self.assertEqual(payload["data"]["riskLevel"], "critical")
+
+    def test_approval_plan_show_list_and_execute_guard(self):
+        with tempfile.TemporaryDirectory() as approval_dir:
+            env = dict(self.BLANK_ENV)
+            env["AMAZON_ADS_APPROVAL_DIR"] = approval_dir
+            planned = self._run(
+                [
+                    "--json",
+                    "campaigns",
+                    "set-state",
+                    "--campaign-id",
+                    "1",
+                    "--state",
+                    "PAUSED",
+                ],
+                extra_env=env,
+            )
+            plan_payload = self._assert_approval_plan(planned, "campaigns.set-state")
+            plan_id = plan_payload["meta"]["planId"]
+
+            shown = self._run(
+                ["--json", "approvals", "show", "--plan-id", plan_id],
+                extra_env=env,
+            )
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            shown_payload = json.loads(shown.stdout)
+            self.assertEqual(shown_payload["planId"], plan_id)
+            self.assertEqual(shown_payload["payload"]["campaigns"][0]["state"], "PAUSED")
+
+            listed = self._run(
+                [
+                    "--json",
+                    "approvals",
+                    "list",
+                    "--status",
+                    "awaiting_user_confirmation",
+                ],
+                extra_env=env,
+            )
+            self.assertEqual(listed.returncode, 0, listed.stderr)
+            list_payload = json.loads(listed.stdout)
+            self.assertEqual(list_payload["data"]["plans"][0]["planId"], plan_id)
+
+            rejected = self._run(
+                [
+                    "--json",
+                    "approvals",
+                    "execute",
+                    "--plan-id",
+                    plan_id,
+                    "--confirm-text",
+                    "确定",
+                ],
+                extra_env=env,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn('confirmation must be exactly "确认"', rejected.stderr)
+
+            missing_credentials = self._run(
+                [
+                    "--json",
+                    "approvals",
+                    "execute",
+                    "--plan-id",
+                    plan_id,
+                    "--confirm-text",
+                    "确认",
+                ],
+                extra_env=env,
+            )
+            self.assertEqual(missing_credentials.returncode, 0, missing_credentials.stderr)
+            missing_payload = json.loads(missing_credentials.stdout)
+            self.assertEqual(missing_payload["meta"]["mode"], "mock")
+            self.assertIn("missingCredentials", missing_payload["meta"])
+            self.assertEqual(
+                missing_payload["data"]["requested"]["planId"],
+                plan_id,
+            )
 
     def test_reports_parse_search_terms_local_file(self):
         with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False) as fh:

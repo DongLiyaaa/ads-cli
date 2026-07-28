@@ -53,6 +53,7 @@ AMAZON_ADS_REFRESH_TOKEN=
 AMAZON_ADS_PROFILE_ID=
 AMAZON_ADS_REGION=NA
 AMAZON_ADS_MARKETPLACE=US
+AMAZON_ADS_APPROVAL_DIR=  # optional; defaults to ~/.local/state/amazon_ads_ops_workbench/approvals
 ```
 
 ## Command Surface
@@ -69,52 +70,73 @@ AMAZON_ADS_MARKETPLACE=US
 - `profiles resolve --marketplace US`
   - Resolve the preferred profile for a marketplace.
 
+### `approvals`
+
+- `approvals list --status awaiting_user_confirmation`
+  - List local approval plans created by write commands.
+- `approvals show --plan-id <PLAN_ID>`
+  - Inspect the exact saved payload, payload hash, risk level, and required confirmation prompt.
+- `approvals execute --plan-id <PLAN_ID> --confirm-text 确认`
+  - Execute a saved write plan only after the user has replied exactly `确认`.
+
+### Live mutation approval gate
+
+Read commands and report commands run normally. SP write commands do not submit directly by default.
+
+When a write command is run without `--dry-run`, it returns `meta.mode = "approval-plan"` and this prompt:
+
+```text
+是否执行？执行请回复“确认”，不执行则无需回复！
+```
+
+The agent must ask the user with that exact prompt. If the user replies exactly `确认`, call `approvals execute --plan-id <PLAN_ID> --confirm-text 确认`. If the user does not reply exactly `确认`, do not execute.
+
 ### `campaigns`
 
 - `campaigns list --marketplace US`
   - Fetch and normalize Sponsored Products campaign metadata.
 - `campaigns create --name "T11 Manual" --targeting-type MANUAL --budget 10 --start-date 2026-07-22 --strategy MANUAL --dry-run`
-  - Build or submit one Sponsored Products campaign creation payload.
+  - Build one Sponsored Products campaign creation payload. Without `--dry-run`, create an approval plan.
 - `campaigns set-state --campaign-id 123 --state PAUSED --dry-run`
-  - Update one Sponsored Products campaign state.
+  - Build one Sponsored Products campaign state payload. Without `--dry-run`, create an approval plan.
 - `campaigns edit-budget --campaign-id 123 --budget 5.0 --budget-type DAILY --dry-run`
-  - Update one Sponsored Products campaign daily budget.
+  - Build one Sponsored Products campaign daily budget payload. Without `--dry-run`, create an approval plan.
 - `campaigns edit-bidding-strategy --campaign-id 123 --strategy AUTO_FOR_SALES --dry-run`
-  - Build or submit one campaign dynamic bidding strategy update payload.
+  - Build one campaign dynamic bidding strategy update payload. Without `--dry-run`, create an approval plan.
 - `campaigns edit-placement-bids --campaign-id 123 --top-of-search 100 --product-pages 25 --rest-of-search 0 --dry-run`
-  - Build or submit one Sponsored Products campaign placement bid adjustment payload.
+  - Build one Sponsored Products campaign placement bid adjustment payload. Without `--dry-run`, create an approval plan.
   - Percentages are explicit user inputs only. Do not recommend, infer, or auto-calculate placement values inside this CLI.
   - Supported placement percentage flags are `--top-of-search`, `--product-pages`, and `--rest-of-search`, each in the 0-900 range.
-  - Use `--dry-run` first to inspect the exact request payload without submitting it.
+  - Use `--dry-run` to inspect the exact request payload without saving an approval plan.
 
 ### `portfolios`
 
 - `portfolios list --marketplace US`
   - Fetch and normalize portfolio rows for the selected marketplace.
 - `portfolios create --name "T11" --budget 100 --currency-code USD --dry-run`
-  - Build or submit one portfolio creation payload.
+  - Build one portfolio creation payload. Without `--dry-run`, create an approval plan.
 - `portfolios set-state --portfolio-id 123 --state ARCHIVED --dry-run`
-  - Build or submit one portfolio state update payload.
+  - Build one portfolio state update payload. Without `--dry-run`, create an approval plan.
 
 ### `ad-groups`
 
 - `ad-groups list --campaign-id 123`
   - Fetch and normalize Sponsored Products ad groups.
 - `ad-groups create --campaign-id 123 --name "Exact Core" --default-bid 0.72 --dry-run`
-  - Build or submit one Sponsored Products ad group creation payload.
+  - Build one Sponsored Products ad group creation payload. Without `--dry-run`, create an approval plan.
 - `ad-groups set-state --campaign-id 123 --ad-group-id 456 --state PAUSED --dry-run`
-  - Build or submit one Sponsored Products ad group state update payload.
+  - Build one Sponsored Products ad group state update payload. Without `--dry-run`, create an approval plan.
 - `ad-groups edit-bid --campaign-id 123 --ad-group-id 456 --default-bid 0.81 --dry-run`
-  - Build or submit one Sponsored Products ad group default bid update payload.
+  - Build one Sponsored Products ad group default bid update payload. Without `--dry-run`, create an approval plan.
 
 ### `keywords`
 
 - `keywords list --campaign-id 123 --ad-group-id 456`
   - Fetch and normalize Sponsored Products keywords.
 - `keywords add --campaign-id 123 --ad-group-id 456 --keyword-text "ai recorder" --match-type EXACT --bid 0.91 --dry-run`
-  - Build or submit one Sponsored Products keyword creation payload.
+  - Build one Sponsored Products keyword creation payload. Without `--dry-run`, create an approval plan.
 - `keywords edit-bid --campaign-id 123 --ad-group-id 456 --keyword-id 789 --bid 0.92 --dry-run`
-  - Build or submit one keyword bid update payload. The CLI does not include `state` unless explicitly supplied.
+  - Build one keyword bid update payload. The CLI does not include `state` unless explicitly supplied. Without `--dry-run`, create an approval plan.
 - `keywords set-state --campaign-id 123 --ad-group-id 456 --keyword-id 789 --state PAUSED --dry-run`
   - Update one keyword state without changing its bid.
 
@@ -123,53 +145,53 @@ AMAZON_ADS_MARKETPLACE=US
 - `product-ads list --campaign-id 123`
   - Fetch and normalize Sponsored Products advertised product rows.
 - `product-ads add --campaign-id 123 --ad-group-id 456 --sku SKU-1 --dry-run`
-  - Build or submit one Sponsored Products advertised product payload. Use exactly one of `--sku` or `--asin`.
+  - Build one Sponsored Products advertised product payload. Use exactly one of `--sku` or `--asin`. Without `--dry-run`, create an approval plan.
 - `product-ads set-state --product-ad-id 789 --state PAUSED --dry-run`
-  - Build or submit one Sponsored Products advertised product state update payload.
+  - Build one Sponsored Products advertised product state update payload. Without `--dry-run`, create an approval plan.
 
 ### `targets`
 
 - `targets list --campaign-id 123`
   - Fetch and normalize Sponsored Products targeting clauses.
 - `targets add-asin --campaign-id 123 --ad-group-id 456 --asin B000000001 --bid 0.88 --dry-run`
-  - Build or submit one ASIN product targeting payload.
+  - Build one ASIN product targeting payload. Without `--dry-run`, create an approval plan.
 - `targets add-category --campaign-id 123 --ad-group-id 456 --category-id 123456 --bid 0.67 --dry-run`
-  - Build or submit one category product targeting payload.
+  - Build one category product targeting payload. Without `--dry-run`, create an approval plan.
 - `targets add-expression --campaign-id 123 --ad-group-id 456 --category-id 123456 --predicate BRAND_SAME_AS=Brand --expression-type AUTO --dry-run`
-  - Build or submit one generic product targeting expression payload. Repeat `--predicate TYPE=VALUE` for user-supplied refinements.
+  - Build one generic product targeting expression payload. Repeat `--predicate TYPE=VALUE` for user-supplied refinements. Without `--dry-run`, create an approval plan.
 - `targets edit-bid --target-id 789 --bid 0.79 --dry-run`
-  - Build or submit one product targeting bid update payload.
+  - Build one product targeting bid update payload. Without `--dry-run`, create an approval plan.
 - `targets set-state --target-id 789 --state ARCHIVED --dry-run`
-  - Build or submit one targeting clause state update payload.
+  - Build one targeting clause state update payload. Without `--dry-run`, create an approval plan.
 
 ### `negatives`
 
 - `negatives list --campaign-id 123 --scope both`
   - Fetch and normalize negative keywords at ad group and/or campaign scope.
 - `negatives add-ad-group --campaign-id 123 --ad-group-id 456 --keyword-text "carplay wireless adapter" --match-type NEGATIVE_EXACT --dry-run`
-  - Build or submit one ad group negative keyword payload.
+  - Build one ad group negative keyword payload. Without `--dry-run`, create an approval plan.
 - `negatives add-campaign --campaign-id 123 --keyword-text "usb c camera" --match-type NEGATIVE_EXACT --dry-run`
-  - Build or submit one campaign negative keyword payload.
+  - Build one campaign negative keyword payload. Without `--dry-run`, create an approval plan.
 - `negatives set-state --negative-keyword-id 789 --scope adGroup --state PAUSED --dry-run`
-  - Build or submit one negative keyword state update payload at ad group or campaign scope.
+  - Build one negative keyword state update payload at ad group or campaign scope. Without `--dry-run`, create an approval plan.
 
 ### `negative-targets`
 
 - `negative-targets list --campaign-id 123 --scope both`
   - Fetch and normalize negative product/category targets at ad group and/or campaign scope.
 - `negative-targets add-ad-group --campaign-id 123 --ad-group-id 456 --asin B000000001 --expression-type AUTO --dry-run`
-  - Build or submit one ad group negative product target payload.
+  - Build one ad group negative product target payload. Without `--dry-run`, create an approval plan.
 - `negative-targets add-campaign --campaign-id 123 --category-id 123456 --dry-run`
-  - Build or submit one campaign negative category target payload.
+  - Build one campaign negative category target payload. Without `--dry-run`, create an approval plan.
 - `negative-targets set-state --negative-target-id 789 --scope campaign --state PAUSED --dry-run`
-  - Build or submit one negative target state update payload.
+  - Build one negative target state update payload. Without `--dry-run`, create an approval plan.
 
 ### `sp-raw`
 
 - `sp-raw request --method POST --path /sp/targets/list --payload-json '{"maxResults":10}' --dry-run`
-  - Inspect or submit one raw Sponsored Products request for official SP endpoints not yet wrapped by typed commands.
+  - Inspect one raw Sponsored Products request for official SP endpoints not yet wrapped by typed commands.
   - The path must start with `/sp/`.
-  - Live raw requests require `--confirm-submit` because raw requests bypass typed validation.
+  - Without `--dry-run`, raw requests create approval plans; execute them only through `approvals execute`.
 
 ### `reports`
 
@@ -351,10 +373,12 @@ Type `help` to see the short command list and `exit` to leave.
 - `snapshot` is the best high-level command when you want one stable response envelope.
 - `campaigns list` is the narrower command when you only need campaign rows.
 - `campaigns edit-budget` currently validates against the Amazon Ads v3 daily budget shape.
-- `campaigns edit-placement-bids` is an interface only. Agents must not infer placement percentages; pass only values supplied by the user and prefer `--dry-run` before live submission.
-- All write commands support `--dry-run`; prefer dry-run before live submission.
+- `campaigns edit-placement-bids` is an interface only. Agents must not infer placement percentages; pass only values supplied by the user and prefer `--dry-run` before creating an approval plan.
+- All SP write commands support `--dry-run`. Without `--dry-run`, they create approval plans and do not submit live mutations.
+- Before executing an approval plan, ask the user exactly: `是否执行？执行请回复“确认”，不执行则无需回复！`
+- Only call `approvals execute --plan-id <PLAN_ID> --confirm-text 确认` after the user replies exactly `确认`.
 - `targets add-expression` and `negative-targets add-*` accept user-supplied predicates as `TYPE=VALUE`; positive targets and ad group negative targets also accept explicit `--expression-type MANUAL|AUTO`.
-- Use typed commands first. Use `sp-raw request` only for official SP endpoints not yet wrapped here; it is restricted to `/sp/` paths and requires `--confirm-submit` for live submission.
+- Use typed commands first. Use `sp-raw request` only for official SP endpoints not yet wrapped here; it is restricted to `/sp/` paths and is also approval-gated.
 - `portfolios list`, `ad-groups list`, `keywords list`, `product-ads list`, `targets list`, `negatives list`, `negative-targets list`, and `reports ...` all return a stable `meta + data` envelope.
 - `negatives set-state` accepts the live Amazon Ads negative keyword states, which are narrower than campaign states.
 - `reports download` defaults to `~/Downloads` unless `--output-dir` is supplied.

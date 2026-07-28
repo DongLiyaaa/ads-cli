@@ -11,6 +11,15 @@ if HARNESS_ROOT not in sys.path:
 
 from cli_anything.amazon_ads_ops_workbench.core.env import AdsEnvironment, normalize_region
 from cli_anything.amazon_ads_ops_workbench.core.client import AmazonAdsClient
+from cli_anything.amazon_ads_ops_workbench.core.approvals import (
+    CONFIRMATION_PROMPT,
+    assert_confirmation_text,
+    count_changes,
+    list_approval_plans,
+    payload_hash,
+    read_approval_plan,
+    write_approval_plan,
+)
 from cli_anything.amazon_ads_ops_workbench.core.campaigns import (
     build_campaign_bidding_strategy_payload,
     build_campaign_budget_payload,
@@ -70,6 +79,48 @@ from cli_anything.amazon_ads_ops_workbench.core.snapshot import (
     find_missing_credentials,
     pick_profile_id,
 )
+
+
+class ApprovalPlanTests(unittest.TestCase):
+    def test_payload_hash_is_stable_for_key_order(self):
+        left = {"campaigns": [{"campaignId": "1", "state": "PAUSED"}]}
+        right = {"campaigns": [{"state": "PAUSED", "campaignId": "1"}]}
+        self.assertEqual(payload_hash("campaigns.set-state", "US", left), payload_hash("campaigns.set-state", "US", right))
+
+    def test_count_changes_prefers_known_array_keys(self):
+        self.assertEqual(count_changes({"keywords": [{"keywordId": "1"}, {"keywordId": "2"}]}), 2)
+        self.assertEqual(count_changes({"method": "GET", "path": "/sp/targets/list"}), 1)
+
+    def test_assert_confirmation_text_requires_exact_chinese_text(self):
+        assert_confirmation_text("确认")
+        with self.assertRaises(ValueError):
+            assert_confirmation_text("confirm")
+
+    def test_write_read_and_list_approval_plan(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            old_dir = os.environ.get("AMAZON_ADS_APPROVAL_DIR")
+            os.environ["AMAZON_ADS_APPROVAL_DIR"] = tmp_dir
+            try:
+                payload = {"campaigns": [{"campaignId": "1", "state": "PAUSED"}]}
+                plan = write_approval_plan(
+                    operation="campaigns.set-state",
+                    marketplace="US",
+                    payload=payload,
+                    policy="user_supplied_values_only",
+                )
+                self.assertTrue(os.path.exists(plan["_approvalPath"]))
+                self.assertEqual(plan["confirmation"]["prompt"], CONFIRMATION_PROMPT)
+                self.assertEqual(plan["status"], "awaiting_user_confirmation")
+                loaded = read_approval_plan(plan["planId"])
+                self.assertEqual(loaded["payload"], payload)
+                plans = list_approval_plans(status="awaiting_user_confirmation")
+                self.assertEqual(len(plans), 1)
+                self.assertEqual(plans[0]["planId"], plan["planId"])
+            finally:
+                if old_dir is None:
+                    os.environ.pop("AMAZON_ADS_APPROVAL_DIR", None)
+                else:
+                    os.environ["AMAZON_ADS_APPROVAL_DIR"] = old_dir
 
 
 class EnvTests(unittest.TestCase):

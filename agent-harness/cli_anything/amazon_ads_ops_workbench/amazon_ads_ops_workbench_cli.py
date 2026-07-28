@@ -8,6 +8,15 @@ from typing import Any
 import click
 
 from cli_anything.amazon_ads_ops_workbench import __version__
+from cli_anything.amazon_ads_ops_workbench.core.approvals import (
+    CONFIRMATION_PROMPT,
+    assert_confirmation_text,
+    list_approval_plans,
+    mark_approval_plan_executed,
+    payload_hash,
+    read_approval_plan,
+    write_approval_plan,
+)
 from cli_anything.amazon_ads_ops_workbench.core.campaigns import (
     build_campaign_bidding_strategy_payload,
     build_campaign_budget_payload,
@@ -121,6 +130,12 @@ def emit_dry_run(
     operation: str,
     policy: str = "user_supplied_values_only",
 ) -> None:
+    data = {
+        "payload": payload,
+        "policy": policy,
+    }
+    if policy == "user_supplied_percentages_only":
+        data["placementPolicy"] = policy
     emit(
         {
             "meta": {
@@ -129,13 +144,66 @@ def emit_dry_run(
                 "marketplace": marketplace,
                 "operation": operation,
             },
-            "data": {
-                "payload": payload,
-                "policy": policy,
-            },
+            "data": data,
         },
         ctx.obj["json"],
     )
+
+
+def emit_approval_plan(
+    ctx: click.Context,
+    marketplace: str,
+    payload: dict[str, Any],
+    operation: str,
+    policy: str = "user_supplied_values_only",
+) -> None:
+    plan = write_approval_plan(
+        operation=operation,
+        marketplace=marketplace,
+        payload=payload,
+        policy=policy,
+    )
+    data = {
+        "payload": payload,
+        "payloadHash": plan["payloadHash"],
+        "riskLevel": plan["riskLevel"],
+        "changeCount": plan["changeCount"],
+        "policy": policy,
+        "execution": plan["execution"],
+    }
+    if policy == "user_supplied_percentages_only":
+        data["placementPolicy"] = policy
+    emit(
+        {
+            "meta": {
+                "mode": "approval-plan",
+                "status": plan["status"],
+                "marketplace": marketplace,
+                "operation": operation,
+                "planId": plan["planId"],
+                "approvalPath": plan["_approvalPath"],
+                "confirmationRequired": True,
+                "confirmationPrompt": CONFIRMATION_PROMPT,
+            },
+            "data": data,
+        },
+        ctx.obj["json"],
+    )
+
+
+def intercept_mutation(
+    ctx: click.Context,
+    marketplace: str,
+    payload: dict[str, Any],
+    operation: str,
+    dry_run: bool,
+    policy: str = "user_supplied_values_only",
+) -> bool:
+    if dry_run:
+        emit_dry_run(ctx, marketplace, payload, operation, policy)
+        return True
+    emit_approval_plan(ctx, marketplace, payload, operation, policy)
+    return True
 
 
 def parse_predicate_options(
@@ -181,6 +249,77 @@ def parse_json_payload(raw_payload: str | None) -> dict[str, Any] | list[Any] | 
     return payload
 
 
+def execute_approved_operation(
+    client: AmazonAdsClient,
+    access_token: str,
+    profile_id: str,
+    plan: dict[str, Any],
+) -> Any:
+    operation = str(plan.get("operation") or "")
+    payload = plan.get("payload")
+    if not isinstance(payload, dict):
+        raise click.UsageError("Approval plan payload must be a JSON object.")
+
+    if operation == "campaigns.create":
+        return client.create_campaign(access_token, profile_id, payload)
+    if operation in {
+        "campaigns.set-state",
+        "campaigns.edit-budget",
+        "campaigns.edit-bidding-strategy",
+        "campaigns.edit-placement-bids",
+    }:
+        return client.edit_campaign(access_token, profile_id, payload)
+    if operation == "portfolios.create":
+        return client.create_portfolio(access_token, profile_id, payload)
+    if operation == "portfolios.set-state":
+        return client.edit_portfolio(access_token, profile_id, payload)
+    if operation == "ad-groups.create":
+        return client.create_ad_group(access_token, profile_id, payload)
+    if operation in {"ad-groups.set-state", "ad-groups.edit-bid"}:
+        return client.edit_ad_group(access_token, profile_id, payload)
+    if operation == "keywords.add":
+        return client.create_keyword(access_token, profile_id, payload)
+    if operation in {"keywords.edit-bid", "keywords.set-state"}:
+        return client.edit_keyword(access_token, profile_id, payload)
+    if operation == "product-ads.add":
+        return client.create_product_ad(access_token, profile_id, payload)
+    if operation == "product-ads.set-state":
+        return client.edit_product_ad(access_token, profile_id, payload)
+    if operation in {"targets.add-asin", "targets.add-category", "targets.add-expression"}:
+        return client.create_target(access_token, profile_id, payload)
+    if operation in {"targets.edit-bid", "targets.set-state"}:
+        return client.edit_target(access_token, profile_id, payload)
+    if operation == "negatives.add-ad-group":
+        return client.create_negative_keyword(access_token, profile_id, payload)
+    if operation == "negatives.add-campaign":
+        return client.create_campaign_negative_keyword(access_token, profile_id, payload)
+    if operation == "negatives.set-state":
+        if "campaignNegativeKeywords" in payload:
+            return client.edit_campaign_negative_keyword(access_token, profile_id, payload)
+        return client.edit_negative_keyword(access_token, profile_id, payload)
+    if operation == "negative-targets.add-ad-group":
+        return client.create_negative_target(access_token, profile_id, payload)
+    if operation == "negative-targets.add-campaign":
+        return client.create_campaign_negative_target(access_token, profile_id, payload)
+    if operation == "negative-targets.set-state":
+        if "campaignNegativeTargetingClauses" in payload:
+            return client.edit_campaign_negative_target(access_token, profile_id, payload)
+        return client.edit_negative_target(access_token, profile_id, payload)
+    if operation == "sp-raw.request":
+        return client.send_sp_raw(
+            access_token=access_token,
+            profile_id=profile_id,
+            method=str(payload.get("method") or "GET"),
+            path=str(payload.get("path") or ""),
+            payload=payload.get("payload"),
+            accept=payload.get("accept") if isinstance(payload.get("accept"), str) else None,
+            content_type=(
+                payload.get("contentType") if isinstance(payload.get("contentType"), str) else None
+            ),
+        )
+    raise click.UsageError(f"Unsupported approval operation: {operation}")
+
+
 @click.group(invoke_without_command=True)
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON output.")
 @click.version_option(version=__version__)
@@ -191,6 +330,115 @@ def cli(ctx: click.Context, as_json: bool) -> None:
     ctx.obj["json"] = as_json
     if ctx.invoked_subcommand is None:
         repl(as_json)
+
+
+@cli.group()
+def approvals() -> None:
+    """Approval plans for live Amazon Ads mutations."""
+
+
+@approvals.command("list")
+@click.option(
+    "--status",
+    default=None,
+    help="Optional status filter, such as awaiting_user_confirmation or executed.",
+)
+@click.option("--limit", default=20, type=int, help="Maximum plans to return.")
+@click.pass_context
+def approvals_list(ctx: click.Context, status: str | None, limit: int) -> None:
+    emit(
+        {
+            "meta": {
+                "mode": "local",
+                "status": "ok",
+            },
+            "data": {
+                "plans": list_approval_plans(status=status, limit=limit),
+            },
+        },
+        ctx.obj["json"],
+    )
+
+
+@approvals.command("show")
+@click.option("--plan-id", required=True, help="Approval plan id.")
+@click.pass_context
+def approvals_show(ctx: click.Context, plan_id: str) -> None:
+    emit(read_approval_plan(plan_id), ctx.obj["json"])
+
+
+@approvals.command("execute")
+@click.option("--plan-id", required=True, help="Approval plan id.")
+@click.option(
+    "--confirm-text",
+    required=True,
+    help='Must be exactly "确认" after the user replies with that text.',
+)
+@click.pass_context
+def approvals_execute(ctx: click.Context, plan_id: str, confirm_text: str) -> None:
+    try:
+        assert_confirmation_text(confirm_text)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    plan = read_approval_plan(plan_id)
+    if plan.get("status") != "awaiting_user_confirmation":
+        raise click.UsageError(
+            f"Approval plan {plan_id} is not awaiting confirmation: {plan.get('status')}"
+        )
+    payload = plan.get("payload")
+    if not isinstance(payload, dict):
+        raise click.UsageError("Approval plan payload must be a JSON object.")
+    expected_hash = payload_hash(
+        str(plan.get("operation") or ""),
+        str(plan.get("marketplace") or ""),
+        payload,
+    )
+    if expected_hash != plan.get("payloadHash"):
+        raise click.UsageError("Approval plan payload hash mismatch; refuse to execute.")
+
+    plan_marketplace = plan.get("marketplace") if isinstance(plan.get("marketplace"), str) else None
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        plan_marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "approvals",
+                health,
+                "execution",
+                {
+                    "planId": plan_id,
+                    "operation": plan.get("operation"),
+                    "marketplace": target_marketplace,
+                    "payloadHash": plan.get("payloadHash"),
+                },
+            ),
+            ctx.obj["json"],
+        )
+        return
+    if client is None or access_token is None or profile_id is None:
+        raise click.UsageError("Live context is incomplete; cannot execute approval plan.")
+
+    result = execute_approved_operation(client, access_token, profile_id, plan)
+    executed_plan = mark_approval_plan_executed(plan_id, result)
+    emit(
+        {
+            "meta": {
+                "mode": "live",
+                "status": "submitted",
+                "planId": plan_id,
+                "operation": plan.get("operation"),
+                "marketplace": target_marketplace,
+                "payloadHash": plan.get("payloadHash"),
+                "approvalPath": executed_plan["_approvalPath"],
+            },
+            "data": {
+                "result": result,
+            },
+        },
+        ctx.obj["json"],
+    )
 
 
 @cli.group()
@@ -321,8 +569,9 @@ def campaigns_create(
         end_date=end_date,
     )
     request_payload = {"campaigns": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "campaigns.create")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "campaigns.create", dry_run
+    ):
         return
 
     health = build_auth_health(env)
@@ -376,8 +625,9 @@ def campaigns_set_state(
     target_marketplace = (marketplace or env.marketplace or "US").upper()
     payload = build_campaign_state_payload(campaign_id=campaign_id, state=state)
     request_payload = {"campaigns": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "campaigns.set-state")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "campaigns.set-state", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -437,8 +687,9 @@ def campaigns_edit_budget(
         budget_type=budget_type,
     )
     request_payload = {"campaigns": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "campaigns.edit-budget")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "campaigns.edit-budget", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -504,13 +755,13 @@ def campaigns_edit_bidding_strategy(
         strategy=strategy,
     )
     request_payload = {"campaigns": [payload]}
-    if dry_run:
-        emit_dry_run(
-            ctx,
-            target_marketplace,
-            request_payload,
-            "campaigns.edit-bidding-strategy",
-        )
+    if intercept_mutation(
+        ctx,
+        target_marketplace,
+        request_payload,
+        "campaigns.edit-bidding-strategy",
+        dry_run,
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -603,21 +854,14 @@ def campaigns_edit_placement_bids(
         raise click.BadParameter(str(exc)) from exc
 
     request_payload = {"campaigns": [payload]}
-    if dry_run:
-        emit(
-            {
-                "meta": {
-                    "mode": "dry-run",
-                    "status": "not_submitted",
-                    "marketplace": target_marketplace,
-                },
-                "data": {
-                    "payload": request_payload,
-                    "placementPolicy": "user_supplied_percentages_only",
-                },
-            },
-            ctx.obj["json"],
-        )
+    if intercept_mutation(
+        ctx,
+        target_marketplace,
+        request_payload,
+        "campaigns.edit-placement-bids",
+        dry_run,
+        policy="user_supplied_percentages_only",
+    ):
         return
 
     health = build_auth_health(env)
@@ -755,8 +999,9 @@ def portfolios_create(
         currency_code=currency_code,
     )
     request_payload = {"portfolios": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "portfolios.create")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "portfolios.create", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -810,8 +1055,9 @@ def portfolios_set_state(
     target_marketplace = (marketplace or env.marketplace or "US").upper()
     payload = build_portfolio_state_payload(portfolio_id=portfolio_id, state=state)
     request_payload = {"portfolios": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "portfolios.set-state")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "portfolios.set-state", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -932,8 +1178,9 @@ def ad_groups_create(
         state=state,
     )
     request_payload = {"adGroups": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "ad-groups.create")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "ad-groups.create", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -996,8 +1243,9 @@ def ad_groups_set_state(
         default_bid=default_bid,
     )
     request_payload = {"adGroups": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "ad-groups.set-state")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "ad-groups.set-state", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -1066,8 +1314,9 @@ def ad_groups_edit_bid(
         state=state,
     )
     request_payload = {"adGroups": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "ad-groups.edit-bid")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "ad-groups.edit-bid", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -1202,8 +1451,9 @@ def keywords_add(
         state=state,
     )
     request_payload = {"keywords": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "keywords.add")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "keywords.add", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -1269,8 +1519,9 @@ def keywords_edit_bid(
         state=state,
     )
     request_payload = {"keywords": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "keywords.edit-bid")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "keywords.edit-bid", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -1335,8 +1586,9 @@ def keywords_set_state(
         state=state,
     )
     request_payload = {"keywords": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "keywords.set-state")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "keywords.set-state", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -1468,8 +1720,9 @@ def product_ads_add(
     except ValueError as exc:
         raise click.BadParameter(str(exc)) from exc
     request_payload = {"productAds": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "product-ads.add")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "product-ads.add", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -1532,8 +1785,9 @@ def product_ads_set_state(
         ad_group_id=ad_group_id,
     )
     request_payload = {"productAds": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "product-ads.set-state")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "product-ads.set-state", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -1668,8 +1922,9 @@ def targets_add_asin(
         expression_type=expression_type,
     )
     request_payload = {"targetingClauses": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "targets.add-asin")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "targets.add-asin", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -1743,8 +1998,9 @@ def targets_add_category(
         expression_type=expression_type,
     )
     request_payload = {"targetingClauses": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "targets.add-category")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "targets.add-category", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -1830,8 +2086,9 @@ def targets_add_expression(
     except ValueError as exc:
         raise click.BadParameter(str(exc)) from exc
     request_payload = {"targetingClauses": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "targets.add-expression")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "targets.add-expression", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -1897,8 +2154,9 @@ def targets_edit_bid(
         state=state,
     )
     request_payload = {"targetingClauses": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "targets.edit-bid")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "targets.edit-bid", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -1969,8 +2227,9 @@ def targets_set_state(
         bid=bid,
     )
     request_payload = {"targetingClauses": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "targets.set-state")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "targets.set-state", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -2099,8 +2358,9 @@ def negatives_add_ad_group(
         match_type=match_type,
     )
     request_payload = {"negativeKeywords": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "negatives.add-ad-group")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "negatives.add-ad-group", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -2162,8 +2422,9 @@ def negatives_add_campaign(
         match_type=match_type,
     )
     request_payload = {"campaignNegativeKeywords": [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "negatives.add-campaign")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "negatives.add-campaign", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -2224,8 +2485,9 @@ def negatives_set_state(
     )
     payload_key = "campaignNegativeKeywords" if scope == "campaign" else "negativeKeywords"
     request_payload = {payload_key: [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "negatives.set-state")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "negatives.set-state", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -2395,13 +2657,13 @@ def negative_targets_add_ad_group(
     except ValueError as exc:
         raise click.BadParameter(str(exc)) from exc
     request_payload = {"negativeTargetingClauses": [payload]}
-    if dry_run:
-        emit_dry_run(
-            ctx,
-            target_marketplace,
-            request_payload,
-            "negative-targets.add-ad-group",
-        )
+    if intercept_mutation(
+        ctx,
+        target_marketplace,
+        request_payload,
+        "negative-targets.add-ad-group",
+        dry_run,
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -2473,13 +2735,13 @@ def negative_targets_add_campaign(
     except ValueError as exc:
         raise click.BadParameter(str(exc)) from exc
     request_payload = {"campaignNegativeTargetingClauses": [payload]}
-    if dry_run:
-        emit_dry_run(
-            ctx,
-            target_marketplace,
-            request_payload,
-            "negative-targets.add-campaign",
-        )
+    if intercept_mutation(
+        ctx,
+        target_marketplace,
+        request_payload,
+        "negative-targets.add-campaign",
+        dry_run,
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -2549,8 +2811,9 @@ def negative_targets_set_state(
         else "negativeTargetingClauses"
     )
     request_payload = {payload_key: [payload]}
-    if dry_run:
-        emit_dry_run(ctx, target_marketplace, request_payload, "negative-targets.set-state")
+    if intercept_mutation(
+        ctx, target_marketplace, request_payload, "negative-targets.set-state", dry_run
+    ):
         return
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
@@ -2612,7 +2875,7 @@ def sp_raw() -> None:
 @click.option(
     "--confirm-submit",
     is_flag=True,
-    help="Required for live raw requests because raw endpoints bypass typed CLI validation.",
+    help="Deprecated compatibility flag; live raw execution is approval-gated.",
 )
 @click.pass_context
 def sp_raw_request(
@@ -2638,19 +2901,15 @@ def sp_raw_request(
         "accept": accept,
         "contentType": content_type,
     }
-    if dry_run:
-        emit_dry_run(
-            ctx,
-            target_marketplace,
-            request_payload,
-            "sp-raw.request",
-            policy="restricted_to_sp_paths_user_supplied_payload_only",
-        )
+    if intercept_mutation(
+        ctx,
+        target_marketplace,
+        request_payload,
+        "sp-raw.request",
+        dry_run,
+        policy="restricted_to_sp_paths_user_supplied_payload_only",
+    ):
         return
-    if not confirm_submit:
-        raise click.UsageError(
-            "Live raw SP requests require --confirm-submit. Run --dry-run first."
-        )
 
     env, target_marketplace, client, access_token, profile_id, health = load_live_context(
         marketplace
@@ -3055,7 +3314,7 @@ def repl(as_json: bool) -> None:
                 skin.print_goodbye()
             break
         if line == "help":
-            help_text = "可用命令: auth health | profiles list | profiles resolve --marketplace US | portfolios list/create/set-state | campaigns list/create/set-state/edit-budget/edit-bidding-strategy/edit-placement-bids | ad-groups list/create/set-state/edit-bid | keywords list/add/edit-bid/set-state | product-ads list/add/set-state | targets list/add-asin/add-category/add-expression/edit-bid/set-state | negatives list/add-ad-group/add-campaign/set-state | negative-targets list/add-ad-group/add-campaign/set-state | sp-raw request | reports create-sp-keywords/create-sp-campaign-placement/create-search-terms/status/download/parse-search-terms/parse-sp-keywords/parse-sp-campaign-placement | snapshot"
+            help_text = "可用命令: auth health | profiles list | profiles resolve --marketplace US | approvals list/show/execute | portfolios list/create/set-state | campaigns list/create/set-state/edit-budget/edit-bidding-strategy/edit-placement-bids | ad-groups list/create/set-state/edit-bid | keywords list/add/edit-bid/set-state | product-ads list/add/set-state | targets list/add-asin/add-category/add-expression/edit-bid/set-state | negatives list/add-ad-group/add-campaign/set-state | negative-targets list/add-ad-group/add-campaign/set-state | sp-raw request | reports create-sp-keywords/create-sp-campaign-placement/create-search-terms/status/download/parse-search-terms/parse-sp-keywords/parse-sp-campaign-placement | snapshot"
             if skin:
                 skin.info(help_text)
             else:

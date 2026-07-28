@@ -99,11 +99,28 @@ cli-anything-amazon-ads-ops-workbench --json reports parse-sp-campaign-placement
 cli-anything-amazon-ads-ops-workbench --json snapshot --marketplace US
 ```
 
+## Approval gate for live mutations
+
+Read commands and report commands run normally. SP write commands do not submit directly by default. When a write command is run without `--dry-run`, the CLI writes an approval plan and returns `meta.mode = "approval-plan"` with a `planId`, payload hash, risk level, and this required prompt:
+
+```text
+是否执行？执行请回复“确认”，不执行则无需回复！
+```
+
+After the user replies exactly `确认`, execute the saved plan:
+
+```bash
+cli-anything-amazon-ads-ops-workbench --json approvals show --plan-id <PLAN_ID>
+cli-anything-amazon-ads-ops-workbench --json approvals execute --plan-id <PLAN_ID> --confirm-text 确认
+```
+
+If the user does not reply exactly `确认`, do not call `approvals execute`.
+
 ## Placement bid adjustment
 
 `campaigns edit-placement-bids` is an interface only. Pass only placement percentages explicitly supplied by the user; the CLI does not recommend or auto-calculate bid adjustments.
 
-Supported flags are `--top-of-search`, `--product-pages`, and `--rest-of-search`, each in the 0-900 range. Use `--dry-run` first to inspect the request payload without submitting it.
+Supported flags are `--top-of-search`, `--product-pages`, and `--rest-of-search`, each in the 0-900 range. Use `--dry-run` to inspect the request payload without creating an approval plan.
 
 ## SP mutation coverage
 
@@ -118,6 +135,8 @@ Supported flags are `--top-of-search`, `--product-pages`, and `--rest-of-search`
 | Negative keyword | `negatives add-ad-group`, `negatives add-campaign` | not applicable | `negatives set-state --state PAUSED` | state support follows Amazon Ads negative keyword API |
 | Negative product/category target | `negative-targets add-ad-group`, `negative-targets add-campaign` | not applicable | `negative-targets set-state --state PAUSED` | `negative-targets set-state --state ARCHIVED` |
 
+All commands in this table support `--dry-run`. Without `--dry-run`, they create approval plans instead of directly submitting to Amazon Ads.
+
 ## Raw SP escape hatch
 
-`sp-raw request` is intentionally restricted to paths beginning with `/sp/`. Use it only when an official SP endpoint is not yet wrapped by a typed command. Live raw requests require `--confirm-submit`; run `--dry-run` first to inspect the exact method, path, payload, and optional media types.
+`sp-raw request` is intentionally restricted to paths beginning with `/sp/`. Use it only when an official SP endpoint is not yet wrapped by a typed command. Raw SP requests are also approval-gated; run `--dry-run` to inspect the exact method, path, payload, and optional media types, or run without `--dry-run` to create an approval plan for `approvals execute`.
