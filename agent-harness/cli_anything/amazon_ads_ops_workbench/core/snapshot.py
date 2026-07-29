@@ -186,11 +186,11 @@ def normalize_campaign_row(campaign: dict[str, Any], marketplace: str) -> dict[s
         "portfolio": f"Portfolio #{portfolio_id}" if portfolio_id else "未分配 Portfolio",
         "channel": "SP",
         "budget": budget,
-        "spend": "待接报表 API",
-        "sales": "待接报表 API",
-        "acos": "待接报表 API",
-        "roas": "待接报表 API",
-        "topSearch": "待接展示份额报表",
+        "spend": "需合并报表",
+        "sales": "需合并报表",
+        "acos": "需合并报表",
+        "roas": "需合并报表",
+        "topSearch": "需展示份额报表合并",
         "action": build_campaign_action(state),
         "marketplace": marketplace,
     }
@@ -205,7 +205,7 @@ def build_campaign_summary(campaigns: list[dict[str, Any]]) -> dict[str, str]:
         "budgetAlerts": str(budget_alerts),
         "transferableBudget": str(paused_count),
         "highRisk": str(risk_count),
-        "note": "当前为 campaign metadata 视角，报表指标后续接入",
+        "note": "当前 snapshot 为 campaign metadata 视角；绩效指标通过 reports create/status/download/parse 异步报表获取后合并。",
     }
 
 
@@ -221,7 +221,7 @@ def build_campaign_action(state: str) -> str:
     if state in {"PAUSED", "ARCHIVED"}:
         return "恢复前先确认预算与投放目标"
     if state in {"ENABLED", "RUNNING"}:
-        return "继续观察，等待报表指标补齐"
+        return "调用 reports 拉取绩效后复核"
     return "复核状态映射与投放设置"
 
 
