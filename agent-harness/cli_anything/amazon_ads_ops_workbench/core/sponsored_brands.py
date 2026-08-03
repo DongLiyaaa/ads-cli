@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .metadata import metadata_time_fields
+
 SB_MEDIA_PATH_TOKENS = (
     "/ads",
     "/creative",
@@ -424,6 +426,7 @@ def normalize_sb_campaign_row(row: dict[str, Any]) -> dict[str, Any]:
         "goal": str(row.get("goal") or ""),
         "costType": str(row.get("costType") or ""),
         "isMultiAdGroupsEnabled": row.get("isMultiAdGroupsEnabled"),
+        **metadata_time_fields(row),
     }
 
 
@@ -433,6 +436,7 @@ def normalize_sb_ad_group_row(row: dict[str, Any]) -> dict[str, Any]:
         "campaignId": _string_id(row.get("campaignId")),
         "name": str(row.get("name") or ""),
         "state": str(row.get("state") or ""),
+        **metadata_time_fields(row),
     }
 
 

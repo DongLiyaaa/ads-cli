@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .metadata import metadata_time_fields
+
 
 def build_keywords_filter(
     campaign_id: str | None = None,
@@ -455,6 +457,7 @@ def normalize_ad_group_row(row: dict[str, Any]) -> dict[str, Any]:
         "name": str(row.get("name") or ""),
         "defaultBid": default_bid_value,
         "state": str(row.get("state") or ""),
+        **metadata_time_fields(row),
     }
 
 
