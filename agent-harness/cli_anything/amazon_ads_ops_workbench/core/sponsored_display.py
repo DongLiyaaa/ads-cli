@@ -4,7 +4,6 @@ from typing import Any
 
 from .metadata import metadata_time_fields
 
-
 SD_MEDIA_PATH_TOKENS = (
     "/sd/creatives",
     "/creative",
