@@ -65,6 +65,9 @@ from cli_anything.amazon_ads_ops_workbench.core.keywords import (
     normalize_product_ad_row,
     normalize_target_row,
 )
+from cli_anything.amazon_ads_ops_workbench.core.metadata import (
+    normalize_metadata_timestamp,
+)
 from cli_anything.amazon_ads_ops_workbench.core.reports import (
     build_download_target_path,
     build_sb_campaigns_report_body,
@@ -101,6 +104,8 @@ from cli_anything.amazon_ads_ops_workbench.core.sponsored_brands import (
     build_sb_target_payload,
     build_sb_target_update_payload,
     normalize_sb_predicates,
+    normalize_sb_ad_group_row,
+    normalize_sb_campaign_row,
 )
 from cli_anything.amazon_ads_ops_workbench.core.sponsored_display import (
     assert_sd_raw_allowed,
@@ -112,12 +117,15 @@ from cli_anything.amazon_ads_ops_workbench.core.sponsored_display import (
     build_sd_product_ad_create_payload,
     build_sd_query_filter,
     build_sd_target_payload,
+    normalize_sd_ad_group_row,
+    normalize_sd_campaign_row,
     normalize_sd_predicates,
 )
 from cli_anything.amazon_ads_ops_workbench.core.snapshot import (
     build_missing_credential_snapshot,
     extract_campaign_records,
     find_missing_credentials,
+    normalize_campaign_row,
     pick_profile_id,
 )
 
@@ -610,7 +618,7 @@ class SponsoredDisplayPayloadTests(unittest.TestCase):
         self.assertEqual(query["adGroupIdFilter"], "2")
         self.assertEqual(query["targetIdFilter"], "3")
         self.assertEqual(query["stateFilter"], "enabled")
-        self.assertEqual(query["pageSize"], "25")
+        self.assertNotIn("pageSize", query)
 
         rule = build_sd_budget_rule_create_payload(
             name="Prime Day",
@@ -977,6 +985,77 @@ class KeywordNormalizationTests(unittest.TestCase):
         self.assertEqual(row["campaignId"], "34")
         self.assertEqual(row["name"], "Exact Core")
         self.assertEqual(row["defaultBid"], 0.77)
+        self.assertEqual(row["createdAt"], "")
+
+    def test_metadata_timestamp_normalizes_epoch_millis(self):
+        self.assertEqual(
+            normalize_metadata_timestamp(1721821668448),
+            "2024-07-24T11:47:48Z",
+        )
+
+    def test_campaign_and_ad_group_normalizers_keep_creation_fields(self):
+        sp_campaign = normalize_campaign_row(
+            {
+                "campaignId": 1,
+                "name": "SP Core",
+                "state": "ENABLED",
+                "budget": {"amount": 10, "type": "DAILY"},
+                "creationDate": 1721821668448,
+                "lastUpdateDate": 1722150654348,
+            },
+            "US",
+        )
+        self.assertIsNotNone(sp_campaign)
+        assert sp_campaign is not None
+        self.assertEqual(sp_campaign["campaignId"], "1")
+        self.assertEqual(sp_campaign["createdAt"], "2024-07-24T11:47:48Z")
+        self.assertEqual(sp_campaign["lastUpdatedAt"], "2024-07-28T07:10:54Z")
+
+        sb_campaign = normalize_sb_campaign_row(
+            {
+                "campaignId": 2,
+                "name": "SB Core",
+                "state": "PAUSED",
+                "extendedData": {
+                    "creationDate": 1721821668448,
+                    "lastUpdateDate": 1722150654348,
+                },
+            }
+        )
+        self.assertEqual(sb_campaign["createdAt"], "2024-07-24T11:47:48Z")
+        self.assertEqual(sb_campaign["lastUpdatedAt"], "2024-07-28T07:10:54Z")
+
+        sb_ad_group = normalize_sb_ad_group_row(
+            {
+                "adGroupId": 3,
+                "campaignId": 2,
+                "name": "SB AG",
+                "state": "ENABLED",
+                "extendedData": {"creationDate": 1721821472475},
+            }
+        )
+        self.assertEqual(sb_ad_group["createdAt"], "2024-07-24T11:44:32Z")
+
+        sd_campaign = normalize_sd_campaign_row(
+            {
+                "campaignId": "4",
+                "name": "SD Core",
+                "state": "enabled",
+                "createdAt": "2026-07-29T00:00:00Z",
+            }
+        )
+        self.assertEqual(sd_campaign["createdAt"], "2026-07-29T00:00:00Z")
+
+        sd_ad_group = normalize_sd_ad_group_row(
+            {
+                "adGroupId": "5",
+                "campaignId": "4",
+                "name": "SD AG",
+                "state": "enabled",
+                "creationDate": 1721821668448,
+            }
+        )
+        self.assertEqual(sd_ad_group["createdAt"], "2024-07-24T11:47:48Z")
 
     def test_normalize_product_ad_row_keeps_ids_and_product(self):
         row = normalize_product_ad_row(

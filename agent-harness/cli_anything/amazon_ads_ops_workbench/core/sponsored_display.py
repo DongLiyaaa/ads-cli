@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .metadata import metadata_time_fields
+
 
 SD_MEDIA_PATH_TOKENS = (
     "/sd/creatives",
@@ -84,8 +86,6 @@ def build_sd_query_filter(
         query["stateFilter"] = _lower_state(state_filter)
     if tactic:
         query["tactic"] = tactic
-    if max_results is not None:
-        query["pageSize"] = str(max_results)
     return query
 
 
@@ -405,7 +405,7 @@ def build_sd_budget_usage_payload(campaign_ids: tuple[str, ...] | list[str]) -> 
 
 
 def normalize_sd_campaign_row(row: dict[str, Any]) -> dict[str, Any]:
-    return _pick(
+    normalized = _pick(
         row,
         (
             "campaignId",
@@ -419,10 +419,12 @@ def normalize_sd_campaign_row(row: dict[str, Any]) -> dict[str, Any]:
             "endDate",
         ),
     )
+    normalized.update(metadata_time_fields(row))
+    return normalized
 
 
 def normalize_sd_ad_group_row(row: dict[str, Any]) -> dict[str, Any]:
-    return _pick(
+    normalized = _pick(
         row,
         (
             "adGroupId",
@@ -434,6 +436,8 @@ def normalize_sd_ad_group_row(row: dict[str, Any]) -> dict[str, Any]:
             "creativeType",
         ),
     )
+    normalized.update(metadata_time_fields(row))
+    return normalized
 
 
 def normalize_sd_product_ad_row(row: dict[str, Any]) -> dict[str, Any]:
