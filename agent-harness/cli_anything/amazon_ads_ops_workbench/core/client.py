@@ -16,6 +16,10 @@ class AmazonAdsClient:
         self.env = env
 
     def exchange_refresh_token(self) -> str:
+        from .runtime import current_runtime
+        runtime = current_runtime.get()
+        if runtime is not None and runtime.env == self.env and runtime.token:
+            return runtime.token
         payload = parse.urlencode(
             {
                 "grant_type": "refresh_token",
@@ -37,6 +41,10 @@ class AmazonAdsClient:
         return token
 
     def list_profiles(self, access_token: str) -> list[dict[str, Any]]:
+        from .runtime import current_runtime
+        runtime = current_runtime.get()
+        if runtime is not None and runtime.env == self.env and runtime.profiles:
+            return runtime.profiles
         req = request.Request(
             f"{get_region_base_url(self.env.region)}/v2/profiles",
             headers=self._build_headers(access_token),
@@ -1363,6 +1371,11 @@ class AmazonAdsClient:
         profile_id: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        from .runtime import current_runtime
+        runtime = current_runtime.get()
+        if runtime is not None and runtime.mode == 'report_plan':
+            runtime.report = payload
+            return {'reportId': 'local-plan', 'status': 'LOCAL_ONLY'}
         req = request.Request(
             f"{get_region_base_url(self.env.region)}/reporting/reports",
             method="POST",
@@ -1415,92 +1428,42 @@ class AmazonAdsClient:
             "bytesWritten": len(data),
         }
 
-    def _paginate_campaigns(
-        self,
-        path: str,
-        access_token: str,
-        profile_id: str,
-    ) -> list[dict[str, Any]]:
-        records: list[dict[str, Any]] = []
-        next_token = ""
-        for _ in range(4):
-            body: dict[str, Any] = {"pageSize": 30}
-            if next_token:
-                body["nextToken"] = next_token
+    def _paginate_campaigns(self, path, access_token, profile_id):
+        return self._post_list(path, access_token, profile_id, {"pageSize": 30})
+
+    def _post_list(self, path, access_token, profile_id, payload):
+        records = []
+        body = dict(payload)
+        seen = set()
+        keys = ("campaigns", "adGroups", "keywords", "negativeKeywords",
+                "campaignNegativeKeywords", "productAds", "targetingClauses",
+                "negativeTargetingClauses", "campaignNegativeTargetingClauses",
+                "portfolios", "budgetRulesDetails", "budgetRules", "locations",
+                "audiences", "snapshots", "results", "items")
+        for _ in range(100):
             req = request.Request(
                 f"{get_region_base_url(self.env.region)}{path}",
-                method="POST",
-                data=json.dumps(body).encode("utf-8"),
-                headers={
-                    **self._build_headers(access_token, accept_path=path),
-                    "Content-Type": self._content_media_type(path),
-                    "Amazon-Advertising-API-Scope": profile_id,
-                },
+                method="POST", data=json.dumps(body).encode("utf-8"),
+                headers={**self._build_headers(access_token, accept_path=path),
+                         "Content-Type": self._content_media_type(path),
+                         "Amazon-Advertising-API-Scope": profile_id},
             )
-            payload = self._send_json(req, f"Campaign list {path}")
-            page_records = []
-            if isinstance(payload, dict):
-                for key in ("campaigns", "results", "items"):
-                    candidate = payload.get(key)
-                    if isinstance(candidate, list):
-                        page_records = [item for item in candidate if isinstance(item, dict)]
-                        break
-                next_token = str(payload.get("nextToken") or "")
-            elif isinstance(payload, list):
-                page_records = [item for item in payload if isinstance(item, dict)]
-                next_token = ""
-            else:
-                page_records = []
-                next_token = ""
-            records.extend(page_records)
-            if not next_token or not page_records:
-                break
-        return records
-
-    def _post_list(
-        self,
-        path: str,
-        access_token: str,
-        profile_id: str,
-        payload: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        req = request.Request(
-            f"{get_region_base_url(self.env.region)}{path}",
-            method="POST",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                **self._build_headers(access_token, accept_path=path),
-                "Content-Type": self._content_media_type(path),
-                "Amazon-Advertising-API-Scope": profile_id,
-            },
-        )
-        data = self._send_json(req, f"List request {path}")
-        if isinstance(data, list):
-            return [item for item in data if isinstance(item, dict)]
-        if isinstance(data, dict):
-            for key in (
-                "campaigns",
-                "adGroups",
-                "keywords",
-                "negativeKeywords",
-                "campaignNegativeKeywords",
-                "productAds",
-                "targetingClauses",
-                "negativeTargetingClauses",
-                "campaignNegativeTargetingClauses",
-                "portfolios",
-                "budgetRulesDetails",
-                "budgetRules",
-                "locations",
-                "audiences",
-                "snapshots",
-                "results",
-                "items",
-            ):
-                candidate = data.get(key)
-                if isinstance(candidate, list):
-                    return [item for item in candidate if isinstance(item, dict)]
-        return []
+            data = self._send_json(req, f"List request {path}")
+            if isinstance(data, list):
+                records.extend(item for item in data if isinstance(item, dict))
+                return records
+            if not isinstance(data, dict):
+                raise RuntimeError("List response is neither an object nor an array")
+            page = next((data[key] for key in keys if isinstance(data.get(key), list)), [])
+            records.extend(item for item in page if isinstance(item, dict))
+            token = data.get("nextToken")
+            if not token:
+                return records
+            if token in seen:
+                raise RuntimeError("Repeated pagination token; refusing incomplete results")
+            seen.add(token)
+            body["nextToken"] = token
+        raise RuntimeError("Pagination exceeded 100 pages; narrow the query filters")
 
     def _get_list(
         self,

@@ -1,0 +1,82 @@
+name: ads-mcp-6666
+x-ads-environment: &ads-environment
+  ADS_DATABASE_URL: ${ADS_DATABASE_URL:?Run ads-control init-env first}
+  ADS_ENCRYPTION_KEY: ${ADS_ENCRYPTION_KEY:?Run ads-control init-env first}
+  ADS_SESSION_KEY: ${ADS_SESSION_KEY:?Run ads-control init-env first}
+  ADS_PUBLIC_ORIGIN: ${ADS_PUBLIC_ORIGIN:-http://127.0.0.1:16666}
+  ADS_SECURE_COOKIES: ${ADS_SECURE_COOKIES:-false}
+  ADS_API_CONCURRENCY: ${ADS_API_CONCURRENCY:-3}
+  ADS_FRONTEND_DIR: /app/web/dist
+services:
+  postgres:
+    image: postgres:16.14-bookworm
+    platform: linux/amd64
+    container_name: ads-mcp-6666-postgres
+    environment:
+      POSTGRES_USER: ads_owner
+      POSTGRES_DB: ads_control
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ads-control init-env first}
+      ADS_DB_PASSWORD: ${ADS_DB_PASSWORD:?Run ads-control init-env first}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/init.sql:/docker-entrypoint-initdb.d/10-ads.sql:ro
+    networks: [ads]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U ads_owner -d ads_control']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 768m
+    cpus: 1.0
+    restart: unless-stopped
+    logging: &logging
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+  api:
+    image: ads-mcp-control-plane:local-amd64
+    build: .
+    platform: linux/amd64
+    container_name: ads-mcp-6666-api
+    environment:
+      <<: *ads-environment
+      ADS_ADMIN_USERNAME: ${ADS_ADMIN_USERNAME:-admin}
+      ADS_ADMIN_PASSWORD: ${ADS_ADMIN_PASSWORD:?Run ads-control init-env first}
+    command: [sh, -c, 'ads-control migrate && exec ads-control serve --host 0.0.0.0 --port 6666']
+    ports:
+      - '127.0.0.1:6666:6666'
+      - '127.0.0.1:16666:6666'
+    networks: [ads]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:6666/healthz", timeout=4)']
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    read_only: true
+    tmpfs: ['/tmp:size=64m,mode=1777']
+    mem_limit: 512m
+    cpus: 1.0
+    restart: unless-stopped
+    logging: *logging
+  worker:
+    image: ads-mcp-control-plane:local-amd64
+    platform: linux/amd64
+    container_name: ads-mcp-6666-worker
+    environment: *ads-environment
+    command: [ads-control, worker]
+    networks: [ads]
+    depends_on:
+      api: {condition: service_healthy}
+    read_only: true
+    tmpfs: ['/tmp:size=64m,mode=1777']
+    mem_limit: 512m
+    cpus: 1.0
+    restart: unless-stopped
+    logging: *logging
+networks:
+  ads:
+    name: ads-mcp-6666-net
+volumes:
+  pgdata:
+    name: ads-mcp-6666-pgdata

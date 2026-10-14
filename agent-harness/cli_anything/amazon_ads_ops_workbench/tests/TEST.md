@@ -152,14 +152,14 @@ OK
 
 ## Validation Notes
 
-- Installed command path resolved to `~/Documents/广告自动化/agent-harness/.venv/bin/cli-anything-amazon-ads-ops-workbench`.
+- Installed command resolved to the local virtual environment's CLI entry point.
 - New mock-path coverage now includes `portfolios list`, `ad-groups list`, `keywords set-state`, `negatives add-campaign`, and `reports parse-search-terms`.
 - Live validation on 2026-07-17 confirmed these command paths:
   - `portfolios list --marketplace US`
   - `ad-groups list --marketplace US --campaign-id <CAMPAIGN_ID>`
   - `keywords set-state ... --keyword-id 999999999999999` reaches business validation and returns `ENTITY_NOT_FOUND`
   - `negatives add-campaign ... --campaign-id 0` reaches business validation and returns `ENTITY_NOT_FOUND`
-- `reports parse-search-terms --input-file ~/Downloads/spSearchTerm-160f042f-c1b8-4192-938b-6970860a4438.json` parsed 58 rows successfully
+- `reports parse-search-terms --input-file <LOCAL_REPORT_FILE>` parsed the local report successfully.
 
 ## Test Results
 
@@ -185,7 +185,7 @@ OK
 
 ## Validation Notes
 
-- Installed command path remained `~/Documents/广告自动化/agent-harness/.venv/bin/cli-anything-amazon-ads-ops-workbench`.
+- Installed command remained the local virtual environment's CLI entry point.
 - Mock-path coverage now includes `campaigns set-state`, `campaigns edit-budget`, `negatives set-state`, and `reports parse-sp-keywords`.
 - Live validation on 2026-07-17 confirmed these list/read paths:
   - `profiles resolve --marketplace US`
@@ -206,13 +206,13 @@ OK
 - A live shape bug was found and fixed during this validation round:
   - `keywords list` and `negatives list` originally sent bare arrays for `campaignIdFilter` and `adGroupIdFilter`
   - Amazon Ads expected the v3 `{\"include\": [..]}` shape, and the fixed commands now return live data correctly
-- Live report orchestration on 2026-07-17 created `spKeywords` report id `8e054314-bb48-4d0e-ba8c-8cc77e716921`, but the task was still `PENDING` as of `2026-07-17T12:10:12.918Z`; download and real-file parse were therefore not completed in this run.
+- Live report orchestration on 2026-07-17 created a `spKeywords` report, but the task was still `PENDING` as of `2026-07-17T12:10:12.918Z`; download and real-file parse were therefore not completed in this run. The private report ID is omitted.
 
 ## Test Results
 
 Validated on 2026-07-22 after adding the Sponsored Products campaign placement bid adjustment interface.
 
-### `PYTHONPATH=~/Documents/ads-cli-publish-20260717/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
+### `PYTHONPATH=./agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
 
 ```text
 ----------------------------------------------------------------------
@@ -221,7 +221,7 @@ Ran 64 tests in 1.573s
 OK
 ```
 
-### `PYTHONPATH=~/Documents/广告自动化/agent-harness python3 -m compileall -q cli_anything/amazon_ads_ops_workbench`
+### `python3 -m compileall -q agent-harness/cli_anything/amazon_ads_ops_workbench`
 
 ```text
 OK
@@ -337,7 +337,7 @@ OK
 
 Validated on 2026-07-22 after completing the Sponsored Products create/add/state mutation surface.
 
-### `PATH=~/Documents/广告自动化/agent-harness/.venv/bin:$PATH CLI_ANYTHING_FORCE_INSTALLED=1 PYTHONPATH=~/Documents/广告自动化/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
+### `PATH="$PWD/.venv/bin:$PATH" CLI_ANYTHING_FORCE_INSTALLED=1 PYTHONPATH=./agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
 
 ```text
 ----------------------------------------------------------------------
@@ -346,7 +346,7 @@ Ran 91 tests in 2.072s
 OK
 ```
 
-### `PYTHONPATH=~/Documents/广告自动化/agent-harness python3 -m compileall -q cli_anything/amazon_ads_ops_workbench`
+### `python3 -m compileall -q agent-harness/cli_anything/amazon_ads_ops_workbench`
 
 ```text
 OK
@@ -367,7 +367,7 @@ OK
 
 Validated on 2026-07-28 after expanding the Sponsored Products operation surface for conversation-driven CLI use.
 
-### `PYTHONPATH=~/Documents/广告自动化/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
+### `PYTHONPATH=./agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
 
 ```text
 ----------------------------------------------------------------------
@@ -386,13 +386,13 @@ OK
 
 - Unit coverage now includes campaign bidding strategy payloads, ad group default bid edits, generic product targeting expressions, target bid edits, negative product targeting payloads, negative target normalization, and raw `/sp/` path restriction.
 - E2E subprocess coverage now includes dry-run payload checks for campaign state/budget/strategy, ad group bid, keyword bid/state, category/expression targets, target bid, negative keywords, negative product targets, and restricted `sp-raw request`.
-- Installed command path `~/Documents/广告自动化/agent-harness/.venv/bin/cli-anything-amazon-ads-ops-workbench` was smoke-tested for `--help`, `targets add-expression --dry-run`, `negative-targets add-ad-group --dry-run`, `campaigns edit-bidding-strategy --dry-run`, and `sp-raw request --dry-run`.
+- The installed CLI entry point was smoke-tested for `--help`, `targets add-expression --dry-run`, `negative-targets add-ad-group --dry-run`, `campaigns edit-bidding-strategy --dry-run`, and `sp-raw request --dry-run`.
 
 ## Test Results
 
 Validated on 2026-07-28 after adding the live mutation approval gate.
 
-### `PYTHONPATH=~/Documents/ads-cli-publish-20260717/agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
+### `PYTHONPATH=./agent-harness python3 -m unittest cli_anything.amazon_ads_ops_workbench.tests.test_core cli_anything.amazon_ads_ops_workbench.tests.test_full_e2e -v`
 
 ```text
 ----------------------------------------------------------------------
