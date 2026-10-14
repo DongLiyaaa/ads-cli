@@ -1,8 +1,17 @@
 # ads-cli
 
-Private GitHub mirror for the Amazon Ads CLI extracted from a larger local workbench.
+Amazon Ads CLI extracted from a larger local workbench.
 
-This repository intentionally contains only the CLI harness, package code, tests, and lightweight design notes needed to operate the command-line surface. It does not include local credential files, generated reports, or unrelated application code.
+This repository contains the CLI harness and an optional authenticated MCP/web control plane. It does not include local credential files or generated reports.
+
+## MCP / Web Control Plane
+
+The optional service adds a Chinese management UI, PostgreSQL-backed report jobs,
+account-scoped MCP tokens, human approval, and execution logs. The original CLI
+remains available. See [setup and behavior](CONTROL_PLANE.md),
+[Docker impact review](deploy/IMPACT.md), and [verification status](VERIFICATION.md).
+The isolated local Docker deployment was approved and verified on 2026-10-14.
+Future new deployments still require the documented container impact review.
 
 ## Layout
 

@@ -26,6 +26,10 @@ def normalize_region(region_value: str | None) -> str:
 
 
 def load_ads_environment(source: dict[str, str] | None = None) -> AdsEnvironment:
+    from .runtime import current_runtime
+    runtime = current_runtime.get()
+    if source is None and runtime is not None:
+        return runtime.env
     raw = source or os.environ
     return AdsEnvironment(
         client_id=(raw.get("AMAZON_ADS_CLIENT_ID") or "").strip(),

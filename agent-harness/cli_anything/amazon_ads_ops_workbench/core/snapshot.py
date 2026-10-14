@@ -238,8 +238,8 @@ def format_sync_time(value: datetime) -> str:
 def _extract_budget(campaign: dict[str, Any]) -> str:
     budget = campaign.get("budget")
     if isinstance(budget, dict):
-        amount = budget.get("amount")
-        budget_type = str(budget.get("type") or "DAILY").upper()
+        amount = budget.get("budget", budget.get("amount"))
+        budget_type = str(budget.get("budgetType") or budget.get("type") or "DAILY").upper()
         if amount is not None:
             return f"{budget_type} ${float(amount):.2f}"
     if isinstance(budget, (int, float)):
