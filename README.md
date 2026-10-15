@@ -1,34 +1,49 @@
 # ads-cli
 
-Amazon Ads CLI extracted from a larger local workbench.
+Amazon Ads 的命令行工具和 MCP 控制台，供 AI 广告员工或人工运营调用。
 
-This repository contains the CLI harness and an optional authenticated MCP/web control plane. It does not include local credential files or generated reports.
+- **CLI**：覆盖 Sponsored Products / Sponsored Brands / Sponsored Display 的查询、报表和写操作，输出结构化 JSON，方便 Agent 解析。
+- **MCP 控制台（可选）**：在 CLI 之上加了 PostgreSQL 持久化、后台报表任务、Streamable HTTP MCP 和中文管理页面。模型只能提交计划，**必须由人在页面上确认后才会真正修改广告**。
 
-## MCP / Web Control Plane
+> 本仓库不包含任何凭证、账户标识或报表数据。
 
-The optional service adds a Chinese management UI, PostgreSQL-backed report jobs,
-account-scoped MCP tokens, human approval, and execution logs. The original CLI
-remains available. See [setup and behavior](CONTROL_PLANE.md),
-[Docker impact review](deploy/IMPACT.md), and [verification status](VERIFICATION.md).
-The isolated local Docker deployment was approved and verified on 2026-10-14.
-Future new deployments still require the documented container impact review.
+## 两种用法怎么选
 
-## Layout
+| 用法 | 适合场景 | 优势 | 劣势 |
+| --- | --- | --- | --- |
+| 只用 CLI | 本机脚本、Codex / Claude 等本地 Agent 直接调命令 | 安装简单，不需要数据库和容器；命令即契约，`--json` 输出稳定 | 凭证在本机环境变量里；任务和结果不持久化；审批靠对话里回复“确认” |
+| MCP 控制台 | 多个广告账户、远程 MCP 客户端、需要留痕和人工审批 | 凭证加密入库；每个 Token 限定账户和权限；报表后台执行并分页入库；审批和执行日志可追溯 | 需要 Docker + PostgreSQL；首次部署要做容器影响评估；客户端要支持自定义 `Authorization` 请求头 |
 
-- `agent-harness/`: installable Python package and CLI source
-- `skills/`: Codex skill entry for routing this CLI in agent flows
-- `docs/`: design notes for interface gaps and next-step expansion
+## 能力概览
 
-## Install
+| 范围 | 内容 |
+| --- | --- |
+| Sponsored Products | Portfolio、广告活动、广告组、关键词、商品广告、商品/类目定向、否定关键词、否定商品定向，以及预算、竞价策略、广告位溢价 |
+| Sponsored Brands | 广告活动、广告组、关键词、定向、否定关键词、否定定向（不含创意/素材上传） |
+| Sponsored Display | 广告活动、广告组、商品广告、定向、受众、地域、预算规则、快照 |
+| 报表 | SP 关键词、搜索词、广告位；SB 活动、广告组、定向、搜索词、广告位；SD 活动、广告组、商品广告、定向，共 12 类；支持下载和本地解析 |
+| Agent 契约 | `capabilities` 输出机器可读的操作清单；控制台对外提供 127 个操作契约（30 个查询、85 个写操作、12 个报表） |
+
+“已封装”不等于“已在真实账户实测”。实测范围以 [验证记录](VERIFICATION.md) 为准。
+
+## 安全模型
+
+- **写操作默认不直接提交。** CLI 写命令先生成审批计划（带 `planId` 和请求摘要），用户回复 `确认` 后才执行 `approvals execute`；`--dry-run` 只预览请求体。
+- **控制台里模型不能自己批准自己。** MCP 只提供 `ads_plan_change`，执行必须由人登录页面、核对精确请求并输入“确认”。审批绑定用户、账户、Profile、操作和请求内容，24 小时过期。
+- **凭证分开管理。** Amazon OAuth 凭证用 Fernet 加密保存；MCP Token、会话令牌只存摘要；管理密码用 scrypt。MCP Token 和 Amazon 凭证是两套认证，不能互换。
+- **结果不确定时不自动重发。** 写操作中断标记 `UNKNOWN`，需要先查询远端核实。
+- **限制并发。** 对 Amazon 的并发调用默认 3、最多 5。
+
+## 快速开始：CLI
+
+需要 Python 3.10+。
 
 ```bash
 cd agent-harness
 python -m pip install -e .
 ```
 
-## Environment
-
-Copy `.env.example` into your local environment management flow and populate real values outside git:
+在本机环境里设置 Amazon Ads 凭证（变量名见 `.env.example`，真实值不要提交到 Git）：
 
 ```bash
 export AMAZON_ADS_CLIENT_ID=...
@@ -39,23 +54,117 @@ export AMAZON_ADS_REGION=NA
 export AMAZON_ADS_MARKETPLACE=US
 ```
 
-## Core commands
+常用命令：
 
 ```bash
-cli-anything-amazon-ads-ops-workbench --json auth health
-cli-anything-amazon-ads-ops-workbench --json campaigns list --marketplace US
-cli-anything-amazon-ads-ops-workbench --json keywords list --campaign-id 123
-cli-anything-amazon-ads-ops-workbench --json negatives list --campaign-id 123 --scope both
-cli-anything-amazon-ads-ops-workbench --json reports create-sp-keywords --start-date 2026-07-01 --end-date 2026-07-07
-cli-anything-amazon-ads-ops-workbench --json reports create-sp-campaign-placement --start-date 2026-07-01 --end-date 2026-07-07 --time-unit DAILY
-cli-anything-amazon-ads-ops-workbench --json reports create-search-terms --start-date 2026-07-01 --end-date 2026-07-07
-cli-anything-amazon-ads-ops-workbench --json reports parse-sp-keywords --input-file ~/Downloads/spKeywords.json
-cli-anything-amazon-ads-ops-workbench --json reports parse-sp-campaign-placement --input-file ~/Downloads/spCampaignPlacement.json
-cli-anything-amazon-ads-ops-workbench --json snapshot --marketplace US
+ads=cli-anything-amazon-ads-ops-workbench
+
+# 查询
+$ads --json auth health
+$ads --json campaigns list --marketplace US
+$ads --json keywords list --campaign-id 123
+$ads --json negatives list --campaign-id 123 --scope both
+$ads --json snapshot --marketplace US
+
+# 报表
+$ads --json reports create-sp-keywords --start-date 2026-07-01 --end-date 2026-07-07
+$ads --json reports create-search-terms --start-date 2026-07-01 --end-date 2026-07-07
+$ads --json reports create-sp-campaign-placement --start-date 2026-07-01 --end-date 2026-07-07 --time-unit DAILY
+
+# 写操作：先预览，再生成审批计划，用户确认后执行
+$ads --json keywords edit-bid --campaign-id 123 --ad-group-id 456 --keyword-id 789 --bid 0.92 --dry-run
+$ads --json keywords edit-bid --campaign-id 123 --ad-group-id 456 --keyword-id 789 --bid 0.92
+$ads --json approvals show --plan-id <PLAN_ID>
+$ads --json approvals execute --plan-id <PLAN_ID> --confirm-text 确认
 ```
 
-## Privacy
+完整命令和 SP/SB/SD 对照表见 [CLI 说明](agent-harness/cli_anything/amazon_ads_ops_workbench/README.md)。
 
-- Do not commit `.env`, refresh tokens, or generated report files.
-- Keep real campaign, profile, and report identifiers out of public documentation.
-- Use `.env.example` only for variable names, never for live values.
+## 快速开始：MCP 控制台
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-server.lock
+.venv/bin/python -m pip install --no-deps -e ./agent-harness
+.venv/bin/ads-control init-env      # 生成 .env（0600），已存在时不会覆盖
+(cd web && npm ci && npm run build)
+
+.venv/bin/python deploy/preflight.py
+docker compose config --quiet
+docker compose build api
+docker compose up -d postgres api
+docker compose up -d worker
+```
+
+> 启动前请先阅读 [容器影响清单](deploy/IMPACT.md)，确认不会影响本机已有容器。三个容器（api / worker / postgres）均为 `linux/amd64`，使用独立网络和数据卷，数据库端口不对宿主机开放。
+
+| 入口 | 地址 |
+| --- | --- |
+| 管理页面 | `http://127.0.0.1:16666`（Chromium 禁止网页访问 6666 端口，所以另开 16666） |
+| MCP（Streamable HTTP） | `http://127.0.0.1:16666/mcp/`；非浏览器客户端也可用 `http://127.0.0.1:6666/mcp/` |
+| 管理账号 | 用户名 `admin`，密码在 `.env` 的 `ADS_ADMIN_PASSWORD` |
+
+默认只绑定 `127.0.0.1`。如需远程访问，请放在 HTTPS 反向代理之后，并设置 `ADS_PUBLIC_ORIGIN` 和 `ADS_SECURE_COOKIES=true`。
+
+### 接入 MCP 客户端
+
+在管理页面连接广告账户，然后到“MCP Token”页生成令牌（明文只显示一次）：
+
+```text
+URL: http://127.0.0.1:16666/mcp/
+Authorization: Bearer <页面生成的 Token>
+```
+
+| 工具 | 用途 |
+| --- | --- |
+| `ads_accounts` | 列出该 Token 可访问的账户 |
+| `ads_capabilities` | 获取操作列表和参数 Schema |
+| `ads_query` | 创建查询任务 |
+| `ads_create_report` | 创建后台报表任务 |
+| `ads_plan_change` | 生成待人工确认的变更计划 |
+| `ads_task_status` | 查看任务状态和结果摘要 |
+| `ads_task_rows` | 分页读取已入库的数据 |
+| `ads_tasks` | 列出可访问的任务 |
+
+页面、任务状态、数据限制和部署细节见 [控制台说明](CONTROL_PLANE.md)。
+
+## 目录结构
+
+```text
+agent-harness/   Python 包：CLI、核心 API 封装、控制台服务（control_plane/）和测试
+web/             控制台前端（React 19 + TypeScript + Vite）
+deploy/          容器影响清单、预检脚本、数据库初始化 SQL、验收脚本
+skills/          Agent 路由用的 Skill 入口
+docs/            接口缺口与后续扩展设计
+compose.yaml     api / worker / postgres 三容器编排
+```
+
+## 开发与测试
+
+```bash
+.venv/bin/python -m pytest \
+  agent-harness/cli_anything/amazon_ads_ops_workbench/tests/test_core.py \
+  agent-harness/cli_anything/amazon_ads_ops_workbench/tests/test_full_e2e.py \
+  agent-harness/cli_anything/amazon_ads_ops_workbench/control_plane/tests/test_contracts.py \
+  agent-harness/cli_anything/amazon_ads_ops_workbench/control_plane/tests/test_http_mcp.py -q
+```
+
+PostgreSQL 集成测试只能在空库上运行，用法见 [控制台说明](CONTROL_PLANE.md)。测试计划见 [CONTROL_PLANE_TEST_PLAN.md](CONTROL_PLANE_TEST_PLAN.md)，最新结果见 [VERIFICATION.md](VERIFICATION.md)。
+
+## 当前边界
+
+- 单管理工作空间，可管理多个广告账户；不是带注册、计费、组织管理的 SaaS。
+- MCP 使用自有 Bearer Token，不支持客户端 OAuth 动态注册。
+- SB/SBV 的创意、图片、视频、Logo、落地页等素材上传不支持。
+- 单个报表最多 31 天，下载上限 64 MiB / 25 万行，大报表需要拆分日期。
+- 取消任务只停止本地排队，不会取消 Amazon 端已开始生成的报告。
+
+## 隐私
+
+- 不要提交 `.env`、Refresh Token 或生成的报表文件。
+- 公开文档里不要出现真实的活动、Profile、报表标识。
+- `.env.example` 只写变量名，不写真实值。
+
+## 许可证
+
+[MIT](LICENSE)
