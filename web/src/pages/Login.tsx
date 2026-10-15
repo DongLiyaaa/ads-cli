@@ -126,7 +126,7 @@ export function Login({
           {busy ? "正在登录…" : "进入工作台"}
           <ArrowRight size={18} />
         </button>
-        <small>管理账户与 MCP Token 独立；Token 无法批准广告变更。</small>
+        <small>管理账户与 MCP Token 独立；Token 默认只能提交变更计划。</small>
       </form>
     </main>
   );

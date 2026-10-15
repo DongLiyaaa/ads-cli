@@ -304,3 +304,12 @@ def test_reset_password_rejects_before_database(overrides, args, status):
     with pytest.raises(Problem) as error:
         _setup_service(**overrides).reset_password(*args, "127.0.0.1")
     assert error.value.status == status
+
+
+def test_token_without_approve_scope_cannot_confirm():
+    from cli_anything.amazon_ads_ops_workbench.control_plane.security import Actor
+
+    actor = Actor("user", "token", frozenset({"changes:plan"}), ("account",), "t1")
+    with pytest.raises(Problem) as error:
+        _setup_service().approve(actor, "task", "确认", "a" * 64)
+    assert error.value.status == 403

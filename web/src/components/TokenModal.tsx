@@ -1,5 +1,5 @@
 import { api } from "../api";
-import { scopeNames } from "../lib/constants";
+import { scopeNames, scopeWarnings } from "../lib/constants";
 import { useWorkspace } from "../workspace";
 import { Select } from "./Select";
 import { Modal } from "./ui";
@@ -76,11 +76,12 @@ export function TokenModal({ close }: { close: () => void }) {
                   type="checkbox"
                   name="scope"
                   value={s}
-                  defaultChecked={s !== "changes:plan"}
+                  defaultChecked={!scopeWarnings[s]}
                 />
                 <span>
                   {label}
                   <small className="mono">{s}</small>
+                  {scopeWarnings[s] && <small>{scopeWarnings[s]}</small>}
                 </span>
               </label>
             ))}

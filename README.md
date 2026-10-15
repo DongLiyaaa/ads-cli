@@ -3,7 +3,7 @@
 Amazon Ads 的命令行工具和 MCP 控制台，供 AI 广告员工或人工运营调用。
 
 - **CLI**：覆盖 Sponsored Products / Sponsored Brands / Sponsored Display 的查询、报表和写操作，输出结构化 JSON，方便 Agent 解析。
-- **MCP 控制台（可选）**：在 CLI 之上加了 PostgreSQL 持久化、后台报表任务、Streamable HTTP MCP 和中文管理页面。模型只能提交计划，**必须由人在页面上确认后才会真正修改广告**。
+- **MCP 控制台（可选）**：在 CLI 之上加了 PostgreSQL 持久化、后台报表任务、Streamable HTTP MCP 和中文管理页面。模型只能提交计划，**必须由用户确认后才会真正修改广告**：在页面上确认，或给 Token 开启“在对话中确认执行变更”权限后，用户在对话里回复“确认”。
 
 > 本仓库不包含任何凭证、账户标识或报表数据。
 
@@ -29,7 +29,7 @@ Amazon Ads 的命令行工具和 MCP 控制台，供 AI 广告员工或人工运
 ## 安全模型
 
 - **写操作默认不直接提交。** CLI 写命令先生成审批计划（带 `planId` 和请求摘要），用户回复 `确认` 后才执行 `approvals execute`；`--dry-run` 只预览请求体。
-- **控制台里模型不能自己批准自己。** MCP 只提供 `ads_plan_change`，执行必须由人登录页面、核对精确请求并输入“确认”。审批绑定用户、账户、Profile、操作和请求内容，24 小时过期。
+- **控制台里写操作必须经用户确认。** 默认由人登录页面、核对精确请求并输入“确认”。Token 开启可选权限 `changes:approve` 后，用户在对话里回复“确认”，AI 可调用 `ads_confirm_change` 直接执行——仅限该 Token 自己提交的计划，确认文本必须是“确认”，并校验请求摘要。审批绑定用户、账户、Profile、操作和请求内容，24 小时过期。
 - **凭证分开管理。** Amazon OAuth 凭证用 Fernet 加密保存；MCP Token、会话令牌只存摘要；管理密码用 scrypt。MCP Token 和 Amazon 凭证是两套认证，不能互换。
 - **结果不确定时不自动重发。** 写操作中断标记 `UNKNOWN`，需要先查询远端核实。
 - **限制并发。** 对 Amazon 的并发调用默认 3、最多 5。
@@ -121,7 +121,8 @@ Authorization: Bearer <页面生成的 Token>
 | `ads_capabilities` | 获取操作列表和参数 Schema |
 | `ads_query` | 创建查询任务 |
 | `ads_create_report` | 创建后台报表任务 |
-| `ads_plan_change` | 生成待人工确认的变更计划 |
+| `ads_plan_change` | 生成待用户确认的变更计划 |
+| `ads_confirm_change` | 用户在对话里回复“确认”后提交执行（需 `changes:approve` 权限） |
 | `ads_task_status` | 查看任务状态和结果摘要 |
 | `ads_task_rows` | 分页读取已入库的数据 |
 | `ads_tasks` | 列出可访问的任务 |

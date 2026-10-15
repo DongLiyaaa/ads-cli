@@ -21,6 +21,7 @@ import { Login } from "./pages/Login";
 import { Setup } from "./pages/Setup";
 import { ResetPassword } from "./pages/ResetPassword";
 import { Password } from "./pages/Password";
+import { ReportData } from "./pages/ReportData";
 import { Overview } from "./pages/Overview";
 import { Accounts } from "./pages/Accounts";
 import { Reports } from "./pages/Reports";
@@ -33,6 +34,7 @@ const pages: Record<string, () => ReactNode> = {
   "/": Overview,
   "/accounts": Accounts,
   "/reports": Reports,
+  "/data": ReportData,
   "/operations": Operations,
   "/approvals": Approvals,
   "/tokens": Tokens,
@@ -72,9 +74,10 @@ export default function App() {
 
   function navigate(path: string) {
     history.pushState({}, "", path);
-    setPage(path);
+    const pathname = new URL(path, location.origin).pathname;
+    setPage(pathname);
     setOffset(0);
-    setFilter(defaultFilter(path));
+    setFilter(defaultFilter(pathname));
     setOneTime("");
     setDetail(null);
     setNotice("");

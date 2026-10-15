@@ -4,6 +4,7 @@ import {
   DownloadSimple,
   Eye,
   ShieldCheck,
+  Table,
   WarningCircle,
 } from "@phosphor-icons/react";
 import { api } from "../api";
@@ -27,7 +28,8 @@ export function TaskDetail({
   setTask: (task: Task) => void;
   close: () => void;
 }) {
-  const { accounts, busy, action, setNotice, setError } = useWorkspace();
+  const { accounts, busy, action, setNotice, setError, navigate } =
+    useWorkspace();
   const [rows, setRows] = useState<RowsPage | null>(null);
   const [rowOffset, setRowOffset] = useState(0);
   const [confirmation, setConfirmation] = useState("");
@@ -136,7 +138,7 @@ export function TaskDetail({
         </pre>
         {task.result_truncated && (
           <p className="hint">
-            此处仅预览前 50 条；点击“数据预览”或导出读取完整数据。
+            此处仅预览前 50 条；在数据表格中查看或导出读取完整数据。
           </p>
         )}
       </details>
@@ -186,10 +188,20 @@ export function TaskDetail({
       <div className="button-row">
         {task.status === "SUCCEEDED" && (
           <>
-            <button className="secondary" onClick={() => loadRows(0)}>
-              <Eye size={17} />
-              数据预览
-            </button>
+            {task.kind === "report" ? (
+              <button
+                className="secondary"
+                onClick={() => navigate(`/data?report=${task.id}`)}
+              >
+                <Table size={17} />
+                在数据表格中查看
+              </button>
+            ) : (
+              <button className="secondary" onClick={() => loadRows(0)}>
+                <Eye size={17} />
+                数据预览
+              </button>
+            )}
             <a className="secondary" href={`/api/tasks/${task.id}/export`}>
               <DownloadSimple size={17} />
               导出 JSON

@@ -57,7 +57,7 @@ class AccountInput(Input):
 
 class TokenInput(Input):
     name: str = Field(min_length=1, max_length=120)
-    scopes: list[str] = Field(min_length=1, max_length=4)
+    scopes: list[str] = Field(min_length=1, max_length=5)
     account_ids: list[str] = Field(min_length=1, max_length=100)
     expires_in_days: int = Field(default=30, ge=1, le=365)
 
@@ -309,11 +309,13 @@ def create_app(settings=None, service=None):
     @app.get("/api/tasks")
     def tasks(
         status: str | None = None,
+        kind: Literal["read", "report", "write"] | None = None,
+        account_id: str | None = Query(None, max_length=36),
         offset: int = Query(0, ge=0),
         limit: int = Query(50, ge=1, le=100),
         actor=Depends(session_actor),
     ):
-        return service.tasks(actor, status, offset, limit)
+        return service.tasks(actor, status, offset, limit, kind, account_id)
 
     @app.get("/api/tasks/{task_id}")
     def task(task_id: str, actor=Depends(session_actor)):
@@ -323,7 +325,7 @@ def create_app(settings=None, service=None):
     def rows(
         task_id: str,
         offset: int = Query(0, ge=0),
-        limit: int = Query(50, ge=1, le=1000),
+        limit: int = Query(50, ge=1, le=200),
         actor=Depends(session_actor),
     ):
         return service.result_rows(actor, task_id, offset, limit)
