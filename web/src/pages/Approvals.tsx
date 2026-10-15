@@ -23,7 +23,7 @@ export function Approvals() {
       <div className="callout info">
         <ShieldCheck size={20} weight="fill" />
         <p>
-          MCP Token 只能提出变更计划，不能批准自己的操作。计划 24 小时后过期；结果待核实的任务不会自动重试。
+          可在此页面核对后确认；拥有“在对话中确认执行变更”权限的 MCP Token，也可在用户于对话中回复“确认”后直接执行它自己提交的计划。计划 24 小时后过期；结果待核实的任务不会自动重试。
         </p>
       </div>
       <section className="panel">

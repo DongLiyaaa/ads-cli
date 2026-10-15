@@ -120,9 +120,9 @@ def test_mcp_initialize_list_call_and_authentication(client):
         json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
     ).json()
     names = [t["name"] for t in listed["result"]["tools"]]
-    assert "ads_plan_change" in names and not any(
-        "approve" in name or "execute" in name for name in names
-    )
+    # Confirmation is a separate, scope-gated tool; there is no direct execute.
+    assert {"ads_plan_change", "ads_confirm_change"} <= set(names)
+    assert not any("execute" in name for name in names)
     result = client.post(
         "/mcp/",
         headers=headers,

@@ -80,6 +80,9 @@ def task_json(t, detail=False):
         "updated_at": t.updated_at.isoformat(),
         "approved_at": t.approved_at.isoformat() if t.approved_at else None,
     }
+    if t.kind == "report":
+        # Report arguments are just the date range; lists show it without detail.
+        value["arguments"] = t.arguments
     if detail:
         result = t.result
         value.update(
@@ -513,13 +516,17 @@ class Service:
         with self.db.sessions() as s:
             return task_json(self.owned_task(s, actor, task_id), True)
 
-    def tasks(self, actor, status=None, offset=0, limit=50):
+    def tasks(self, actor, status=None, offset=0, limit=50, kind=None, account_id=None):
         with self.db.sessions() as s:
             q = select(Task).where(Task.owner_id == actor.user_id)
             if actor.kind == "token":
                 q = q.where(Task.account_id.in_(actor.account_ids))
             if status:
                 q = q.where(Task.status == status)
+            if kind:
+                q = q.where(Task.kind == kind)
+            if account_id:
+                q = q.where(Task.account_id == account_id)
             rows = s.scalars(
                 q.order_by(Task.created_at.desc()).offset(offset).limit(limit)
             ).all()
@@ -537,8 +544,8 @@ class Service:
             return [task_json(t) for t in rows]
 
     def approve(self, actor, task_id, confirm_text, expected_hash):
-        if actor.kind != "session":
-            raise Problem(403, "MCP Token 不能代替用户确认")
+        if actor.kind == "token" and "changes:approve" not in actor.scopes:
+            raise Problem(403, "此 MCP Token 没有“确认执行变更”权限，请在管理页面确认")
         if confirm_text != "确认":
             raise Problem(400, "请输入“确认”")
         with self.db.sessions.begin() as s:
@@ -554,6 +561,8 @@ class Service:
             if t.approval_expires_at <= now():
                 raise Problem(409, "计划已过期，请重新生成")
             a = self.account(s, actor, t.account_id)
+            if actor.kind == "token" and t.source_token_id != actor.token_id:
+                raise Problem(403, "只能确认本 Token 提交的计划，其他计划请在管理页面确认")
             actual = bound_hash(
                 actor.user_id, a.id, a.profile_id, t.operation, t.payload
             )
@@ -572,7 +581,11 @@ class Service:
                 "QUEUED",
                 a.id,
                 t.id,
-                {"payload_hash": actual},
+                {
+                    "payload_hash": actual,
+                    "via": "mcp" if actor.kind == "token" else "web",
+                    "token_id": actor.token_id,
+                },
             )
             return task_json(t, True)
 

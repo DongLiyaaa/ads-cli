@@ -6,7 +6,14 @@ import secrets
 from dataclasses import dataclass
 from cryptography.fernet import Fernet
 
-SCOPES = {"ads:read", "reports:read", "reports:create", "changes:plan"}
+SCOPES = {
+    "ads:read",
+    "reports:read",
+    "reports:create",
+    "changes:plan",
+    # Opt-in: lets an MCP client confirm a plan after the user replies 确认 in chat.
+    "changes:approve",
+}
 
 
 class Problem(Exception):

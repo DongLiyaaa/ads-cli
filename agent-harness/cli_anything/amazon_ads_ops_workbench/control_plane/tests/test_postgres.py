@@ -232,6 +232,57 @@ class PostgresIntegration(unittest.TestCase):
                 with self.db.api_slot():
                     pass
 
+    def test_mcp_token_confirms_only_its_own_plan_with_scope(self):
+        def token(scopes):
+            raw = self.service.create_token(
+                self.actor, "fixture", scopes, [self.account_id], 1
+            )["token"]
+            return self.service.authenticate_token(raw)
+
+        plain = token(["changes:plan"])
+        approver = token(["changes:plan", "changes:approve"])
+        arguments = {
+            "name": "integration-only",
+            "budget": 10,
+            "targeting_type": "MANUAL",
+            "start_date": "2026-10-14",
+            "state": "PAUSED",
+        }
+
+        def plan(actor):
+            return self.service.create_task(
+                actor,
+                self.account_id,
+                "campaigns.create",
+                arguments,
+                secrets.token_hex(16),
+                "write",
+            )
+
+        def status(actor, p, text="确认"):
+            try:
+                self.service.approve(actor, p["id"], text, p["payload_hash"])
+                return 200
+            except Problem as exc:
+                return exc.status
+
+        own = plan(approver)
+        self.assertEqual(status(plain, plan(plain)), 403)  # no approve scope
+        self.assertEqual(status(approver, self.plan()), 403)  # plan from the web
+        self.assertEqual(status(approver, own, "ok"), 400)  # user did not say 确认
+        self.assertEqual(status(approver, own), 200)
+        self.assertEqual(status(approver, own), 409)  # only once
+        self.assertTrue(Worker(self.service).run_one())
+        self.assertEqual(self.gateway.client.writes, 1)
+        self.assertEqual(self.service.task(self.actor, own["id"])["status"], "SUCCEEDED")
+        with self.db.sessions() as s:
+            detail = s.scalar(
+                select(Audit.detail).where(
+                    Audit.task_id == own["id"], Audit.action == "task.approved"
+                )
+            )
+        self.assertEqual((detail["via"], detail["token_id"]), ("mcp", approver.token_id))
+
     def test_http_login_token_approval_and_revocation(self):
         with self.db.sessions() as s:
             username = s.get(User, self.user_id).username

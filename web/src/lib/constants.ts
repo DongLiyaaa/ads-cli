@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   TerminalWindow,
   Buildings,
+  Table,
 } from "@phosphor-icons/react";
 
 export const PAGE_SIZE = 50;
@@ -14,6 +15,7 @@ export const navigation = [
   { path: "/", label: "工作概览", icon: SquaresFour },
   { path: "/accounts", label: "广告账户", icon: Buildings },
   { path: "/reports", label: "报表与数据", icon: ChartBar },
+  { path: "/data", label: "数据表格", icon: Table },
   { path: "/operations", label: "广告操作", icon: TerminalWindow },
   { path: "/approvals", label: "待确认操作", icon: ShieldCheck },
   { path: "/tokens", label: "MCP Token", icon: Key },
@@ -63,6 +65,13 @@ export const scopeNames: Record<string, string> = {
   "ads:read": "查询广告数据",
   "reports:read": "读取已保存报表",
   "reports:create": "创建报表任务",
-  "changes:plan": "提交变更计划（不能自行批准）",
+  "changes:plan": "提交变更计划",
+  "changes:approve": "在对话中确认执行变更",
+};
+/** Scopes that change real ads; never pre-selected when creating a token. */
+export const scopeWarnings: Record<string, string> = {
+  "changes:plan": "生成待确认的变更计划，不会直接修改广告",
+  "changes:approve":
+    "用户在对话里回复“确认”后，AI 可直接提交执行，会修改真实广告；仅限该 Token 自己提交的计划",
 };
 export const MAX_REPORT_DAYS = 31;

@@ -2384,3 +2384,56 @@ td pre {
     }
   }
 }
+
+/* Report data table */
+.report-picker {
+  width: 320px;
+}
+@media (max-width: 800px) {
+  .panel-tools:has(.report-picker) {
+    flex-wrap: wrap;
+    flex-shrink: 1;
+    width: 100%;
+  }
+  .report-picker {
+    width: 100%;
+  }
+}
+.table-status {
+  padding: 48px 22px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+.data-table {
+  max-height: calc(100vh - 290px);
+  min-height: 240px;
+}
+.data-table[aria-busy="true"] tbody {
+  opacity: 0.55;
+}
+.data-table:focus-visible {
+  outline: none;
+  box-shadow: inset var(--ring);
+}
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.data-table th,
+.data-table td {
+  padding: 9px 14px;
+}
+.data-table td.numeric,
+.data-table th.numeric {
+  font-variant-numeric: tabular-nums;
+}
+.data-table .row-no {
+  width: 1%;
+  color: var(--subtle);
+  font-variant-numeric: tabular-nums;
+}
+.data-table tbody tr:hover td {
+  background: var(--surface-2);
+}
