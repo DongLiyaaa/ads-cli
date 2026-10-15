@@ -40,7 +40,8 @@ services:
     environment:
       <<: *ads-environment
       ADS_ADMIN_USERNAME: ${ADS_ADMIN_USERNAME:-admin}
-      ADS_ADMIN_PASSWORD: ${ADS_ADMIN_PASSWORD:?Run ads-control init-env first}
+      ADS_ADMIN_PASSWORD: ${ADS_ADMIN_PASSWORD:-}
+      ADS_SETUP_TOKEN: ${ADS_SETUP_TOKEN:-}
     command: [sh, -c, 'ads-control migrate && exec ads-control serve --host 0.0.0.0 --port 6666']
     ports:
       - '127.0.0.1:6666:6666'

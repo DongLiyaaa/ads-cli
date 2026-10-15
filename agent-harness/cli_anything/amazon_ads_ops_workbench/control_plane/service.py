@@ -1,8 +1,10 @@
 from datetime import timedelta
+import hmac
+import re
 import secrets
 import threading
 import time
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func, text
 from sqlalchemy.exc import IntegrityError
 from ..core.client import AmazonAdsClient
 from ..core.env import AdsEnvironment
@@ -30,6 +32,9 @@ from .security import (
     redact,
 )
 from .contracts import invoke_contract, validate_arguments
+
+
+USERNAME = re.compile(r"[A-Za-z0-9._@-]{3,64}")
 
 
 def audit(s, owner, action, status="OK", account=None, task=None, detail=None):
@@ -123,23 +128,26 @@ class Service:
         self.gateway = gateway or Gateway()
         self.dummy_hash = password_hash(secrets.token_urlsafe(24))
 
-    def login(self, username, password, ip):
-        key = token_hash(ip)
-        with self.db.sessions.begin() as s:
-            # The lock also covers the absent-row case on first attempt.
-            from sqlalchemy import text
+    def attempt(self, s, key, message):
+        # The lock also covers the absent-row case on first attempt.
+        s.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"), {"key": int(key[:15], 16)}
+        )
+        attempt = s.get(LoginAttempt, key)
+        if attempt is None:
+            attempt = LoginAttempt(key=key, count=0, window_start=now())
+            s.add(attempt)
+        if now() - attempt.window_start > timedelta(minutes=15):
+            attempt.count, attempt.window_start = 0, now()
+        if attempt.count >= 10:
+            raise Problem(429, message)
+        return attempt
 
-            s.execute(
-                text("SELECT pg_advisory_xact_lock(:key)"), {"key": int(key[:15], 16)}
+    def login(self, username, password, ip):
+        with self.db.sessions.begin() as s:
+            attempt = self.attempt(
+                s, token_hash(ip), "登录尝试过多，请 15 分钟后重试"
             )
-            attempt = s.get(LoginAttempt, key)
-            if attempt is None:
-                attempt = LoginAttempt(key=key, count=0, window_start=now())
-                s.add(attempt)
-            if now() - attempt.window_start > timedelta(minutes=15):
-                attempt.count, attempt.window_start = 0, now()
-            if attempt.count >= 10:
-                raise Problem(429, "登录尝试过多，请 15 分钟后重试")
             user = s.scalar(select(User).where(User.username == username))
             valid = password_matches(
                 password, user.password_hash if user else self.dummy_hash
@@ -150,18 +158,101 @@ class Service:
             else:
                 failure = False
                 attempt.count = 0
-                raw = secrets.token_urlsafe(40)
-                s.add(
-                    Session(
-                        token_hash=token_hash(raw),
-                        user_id=user.id,
-                        expires_at=now() + timedelta(hours=12),
-                    )
-                )
+                raw = self.open_session(s, user)
                 audit(s, user.id, "session.login")
         if failure:
             raise Problem(401, "用户名或密码不正确")
         return raw
+
+    def open_session(self, s, user):
+        raw = secrets.token_urlsafe(40)
+        s.add(
+            Session(
+                token_hash=token_hash(raw),
+                user_id=user.id,
+                expires_at=now() + timedelta(hours=12),
+            )
+        )
+        return raw
+
+    def setup_state(self):
+        with self.db.sessions() as s:
+            empty = not s.scalar(select(func.count()).select_from(User))
+        return {
+            "needs_setup": empty,
+            "token_required": bool(self.settings.setup_token),
+            "available": bool(self.settings.setup_token) or self.settings.loopback,
+        }
+
+    def check_setup_token(self, setup_token):
+        # Setup and password reset need no login. Without a setup token anyone
+        # who reaches the page could take the admin account, so only loopback
+        # deployments may skip it.
+        expected = self.settings.setup_token
+        if expected:
+            if not hmac.compare_digest(setup_token.encode(), expected.encode()):
+                raise Problem(403, "初始化口令不正确")
+        elif not self.settings.loopback:
+            raise Problem(403, "远程部署需先在 .env 设置 ADS_SETUP_TOKEN")
+
+    @staticmethod
+    def check_password(username, password):
+        if len(password) < 12:
+            raise Problem(422, "密码至少需要 12 位")
+        if password.lower() == username.lower():
+            raise Problem(422, "密码不能与用户名相同")
+
+    def setup_admin(self, username, password, setup_token=""):
+        self.check_setup_token(setup_token)
+        if not USERNAME.fullmatch(username):
+            raise Problem(422, "用户名需为 3–64 位字母、数字或 . _ @ -")
+        self.check_password(username, password)
+        with self.db.sessions.begin() as s:
+            # Same lock as migrate(), so env bootstrap and concurrent setups serialize.
+            s.execute(text("SELECT pg_advisory_xact_lock(6666, 1)"))
+            if s.scalar(select(func.count()).select_from(User)):
+                raise Problem(409, "控制台已完成初始化，请直接登录")
+            user = User(username=username, password_hash=password_hash(password))
+            s.add(user)
+            s.flush()
+            raw = self.open_session(s, user)
+            audit(s, user.id, "setup.admin_created")
+        return raw
+
+    def reset_password(self, username, password, setup_token, ip):
+        self.check_setup_token(setup_token)
+        self.check_password(username, password)
+        with self.db.sessions.begin() as s:
+            attempt = self.attempt(
+                s, token_hash("reset:" + ip), "重置尝试过多，请 15 分钟后重试"
+            )
+            user = s.scalar(select(User).where(User.username == username))
+            if user:
+                user.password_hash = password_hash(password)
+                # Sign out everywhere: an old session must not survive a reset.
+                s.execute(delete(Session).where(Session.user_id == user.id))
+                audit(s, user.id, "password.reset")
+                attempt.count = 0
+            else:
+                attempt.count += 1
+        if not user:
+            raise Problem(404, "用户名不存在")
+        return {"reset": True}
+
+    def change_password(self, actor, raw_session, password):
+        with self.db.sessions.begin() as s:
+            user = s.get(User, actor.user_id)
+            self.check_password(user.username, password)
+            user.password_hash = password_hash(password)
+            # Keep the current session; sign out every other one.
+            s.execute(
+                delete(Session).where(
+                    Session.user_id == user.id,
+                    Session.token_hash != token_hash(raw_session),
+                )
+            )
+            audit(s, user.id, "password.changed")
+        return {"changed": True}
 
     def authenticate_session(self, raw):
         if not raw:

@@ -86,7 +86,7 @@ $ads --json approvals execute --plan-id <PLAN_ID> --confirm-text 确认
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-server.lock
 .venv/bin/python -m pip install --no-deps -e ./agent-harness
-.venv/bin/ads-control init-env      # 生成 .env（0600），已存在时不会覆盖
+.venv/bin/ads-control init-env      # 生成 .env（0600，数据库密码与加密密钥），已存在时不会覆盖
 (cd web && npm ci && npm run build)
 
 .venv/bin/python deploy/preflight.py
@@ -102,13 +102,13 @@ docker compose up -d worker
 | --- | --- |
 | 管理页面 | `http://127.0.0.1:16666`（Chromium 禁止网页访问 6666 端口，所以另开 16666） |
 | MCP（Streamable HTTP） | `http://127.0.0.1:16666/mcp/`；非浏览器客户端也可用 `http://127.0.0.1:6666/mcp/` |
-| 管理账号 | 用户名 `admin`，密码在 `.env` 的 `ADS_ADMIN_PASSWORD` |
+| 管理账号 | 首次打开页面时自己创建（只能创建一次）；登录后可在侧栏修改密码，忘记密码可在登录页一键重置。远程部署需在 `.env` 设置 `ADS_SETUP_TOKEN`，创建和重置时都要填写 |
 
 默认只绑定 `127.0.0.1`。如需远程访问，请放在 HTTPS 反向代理之后，并设置 `ADS_PUBLIC_ORIGIN` 和 `ADS_SECURE_COOKIES=true`。
 
 ### 接入 MCP 客户端
 
-在管理页面连接广告账户，然后到“MCP Token”页生成令牌（明文只显示一次）：
+登录管理页面并连接广告账户，然后到“MCP Token”页生成令牌（明文只显示一次）：
 
 ```text
 URL: http://127.0.0.1:16666/mcp/

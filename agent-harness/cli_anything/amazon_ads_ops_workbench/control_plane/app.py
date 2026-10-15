@@ -29,6 +29,22 @@ class Login(Input):
     password: str = Field(min_length=1, max_length=1024)
 
 
+class SetupInput(Input):
+    username: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=1, max_length=1024)
+    setup_token: str = Field(default="", max_length=256)
+
+
+class ResetInput(Input):
+    username: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=1, max_length=1024)
+    setup_token: str = Field(default="", max_length=256)
+
+
+class PasswordInput(Input):
+    password: str = Field(min_length=1, max_length=1024)
+
+
 class AccountInput(Input):
     label: str = Field(min_length=1, max_length=160)
     region: Literal["NA", "EU", "FE"] = "NA"
@@ -149,16 +165,10 @@ def create_app(settings=None, service=None):
                 {"status": "unavailable", "database": "unreachable"}, status_code=503
             )
 
-    @app.post("/api/login")
-    def login(data: Login, request: Request):
-        raw = service.login(
-            data.username,
-            data.password,
-            request.client.host if request.client else "unknown",
-        )
+    def signed_in(username, raw):
         response = JSONResponse(
             {
-                "username": data.username,
+                "username": username,
                 "csrf_token": csrf_token(raw, settings.session_key),
             }
         )
@@ -171,6 +181,41 @@ def create_app(settings=None, service=None):
             max_age=43200,
         )
         return response
+
+    @app.get("/api/setup")
+    def setup_state():
+        return service.setup_state()
+
+    @app.post("/api/setup")
+    def setup(data: SetupInput):
+        raw = service.setup_admin(data.username, data.password, data.setup_token)
+        return signed_in(data.username, raw)
+
+    @app.post("/api/login")
+    def login(data: Login, request: Request):
+        raw = service.login(
+            data.username,
+            data.password,
+            request.client.host if request.client else "unknown",
+        )
+        return signed_in(data.username, raw)
+
+    @app.post("/api/password/reset")
+    def reset_password(data: ResetInput, request: Request):
+        return service.reset_password(
+            data.username,
+            data.password,
+            data.setup_token,
+            request.client.host if request.client else "unknown",
+        )
+
+    @app.post("/api/password")
+    def change_password(
+        data: PasswordInput, request: Request, actor=Depends(session_actor)
+    ):
+        return service.change_password(
+            actor, request.cookies["ads_session"], data.password
+        )
 
     @app.get("/api/session")
     def session(request: Request):

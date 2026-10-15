@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { PlugsConnected, SignOut } from "@phosphor-icons/react";
+import { LockKey, PlugsConnected, SignOut } from "@phosphor-icons/react";
 import { navigation } from "../lib/constants";
 import { useWorkspace } from "../workspace";
 
@@ -67,8 +67,21 @@ export function Sidebar({ onLogout }: { onLogout: () => void }) {
         </span>
         <span className="user">
           {user}
-          <small>工作空间管理员</small>
+          <small>管理员</small>
         </span>
+        <button
+          aria-label="修改密码"
+          data-tip="修改密码"
+          data-tip-align="end"
+          data-tip-side="top"
+          className={
+            page === "/password" ? "icon-button active" : "icon-button"
+          }
+          aria-current={page === "/password" ? "page" : undefined}
+          onClick={() => navigate("/password")}
+        >
+          <LockKey size={19} />
+        </button>
         <button
           aria-label="退出登录"
           data-tip="退出登录"

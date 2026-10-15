@@ -65,3 +65,8 @@ export type Overview = {
   max_api_concurrency?: number;
 };
 export type RowsPage = { rows: any[]; total: number };
+export type SetupState = {
+  needs_setup: boolean;
+  token_required: boolean;
+  available: boolean;
+};

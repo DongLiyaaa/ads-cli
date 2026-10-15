@@ -11,6 +11,7 @@ class Settings:
     session_key: str
     admin_username: str = "admin"
     admin_password: str = ""
+    setup_token: str = ""
     public_origin: str = "http://127.0.0.1:16666"
     secure_cookies: bool = False
     api_concurrency: int = 3
@@ -25,6 +26,7 @@ class Settings:
             session_key=os.environ.get("ADS_SESSION_KEY", ""),
             admin_username=os.environ.get("ADS_ADMIN_USERNAME", "admin"),
             admin_password=os.environ.get("ADS_ADMIN_PASSWORD", ""),
+            setup_token=os.environ.get("ADS_SETUP_TOKEN", ""),
             public_origin=os.environ.get(
                 "ADS_PUBLIC_ORIGIN", "http://127.0.0.1:16666"
             ).rstrip("/"),
@@ -63,3 +65,7 @@ class Settings:
         if s.public_origin.startswith("https://") and not s.secure_cookies:
             raise ValueError("HTTPS deployment requires ADS_SECURE_COOKIES=true")
         return s
+
+    @property
+    def loopback(self):
+        return urlsplit(self.public_origin).hostname in {"localhost", "127.0.0.1", "::1"}

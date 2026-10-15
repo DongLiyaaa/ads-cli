@@ -8,6 +8,7 @@ import type {
   LogEntry,
   MCPToken,
   Overview as OverviewData,
+  SetupState,
   Task,
 } from "./lib/types";
 import { WorkspaceContext, type Workspace } from "./workspace";
@@ -17,6 +18,9 @@ import { TaskDetail } from "./components/TaskDetail";
 import { AccountModal } from "./components/AccountModal";
 import { TokenModal } from "./components/TokenModal";
 import { Login } from "./pages/Login";
+import { Setup } from "./pages/Setup";
+import { ResetPassword } from "./pages/ResetPassword";
+import { Password } from "./pages/Password";
 import { Overview } from "./pages/Overview";
 import { Accounts } from "./pages/Accounts";
 import { Reports } from "./pages/Reports";
@@ -33,6 +37,7 @@ const pages: Record<string, () => ReactNode> = {
   "/approvals": Approvals,
   "/tokens": Tokens,
   "/logs": Logs,
+  "/password": Password,
 };
 
 /** The approvals page opens on pending plans; every other page shows all statuses. */
@@ -43,6 +48,8 @@ function defaultFilter(path: string) {
 export default function App() {
   const [user, setUser] = useState<string | null>(null),
     [booting, setBooting] = useState(true),
+    [setup, setSetup] = useState<SetupState | null>(null),
+    [loginNotice, setLoginNotice] = useState(""),
     [page, setPage] = useState(location.pathname);
   const [accounts, setAccounts] = useState<Account[]>([]),
     [accountId, setAccountId] = useState(""),
@@ -100,7 +107,12 @@ export default function App() {
         setCsrf(s.csrf_token);
         setUser(s.username);
       })
-      .catch(() => {})
+      .catch(() =>
+        // No session: a fresh database shows the first-run setup instead.
+        api<SetupState>("/setup")
+          .then((st) => setSetup(st.needs_setup ? st : null))
+          .catch(() => {}),
+      )
       .finally(() => setBooting(false));
   }, []);
   useEffect(() => {
@@ -188,7 +200,41 @@ export default function App() {
   }
 
   if (booting) return <div className="boot">正在连接 Ads Console…</div>;
-  if (!user) return <Login onLogin={setUser} />;
+  if (!user && setup)
+    return (
+      <Setup
+        state={setup}
+        onDone={(name) => {
+          setSetup(null);
+          setUser(name);
+        }}
+        onAlreadySetup={(message) => {
+          setSetup(null);
+          setLoginNotice(message);
+        }}
+      />
+    );
+  if (!user && page === "/reset-password")
+    return (
+      <ResetPassword
+        onBack={() => navigate("/")}
+        onDone={(message) => {
+          navigate("/");
+          setLoginNotice(message);
+        }}
+      />
+    );
+  if (!user)
+    return (
+      <Login
+        onLogin={(name) => {
+          setLoginNotice("");
+          setUser(name);
+        }}
+        onForgot={() => navigate("/reset-password")}
+        notice={loginNotice}
+      />
+    );
 
   const workspace: Workspace = {
     user,
