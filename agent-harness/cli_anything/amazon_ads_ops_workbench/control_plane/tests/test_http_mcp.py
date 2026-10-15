@@ -28,6 +28,25 @@ class FakeService:
     def approve(self, *args):
         raise AssertionError("Unauthenticated approval reached service")
 
+    def setup_state(self):
+        return {"needs_setup": True, "token_required": False, "available": True}
+
+    def reset_password(self, username, password, setup_token, ip):
+        assert (username, password, setup_token) == ("owner", "long-password-1", "")
+        return {"reset": True}
+
+    def change_password(self, actor, raw_session, password):
+        assert (actor.kind, raw_session, password) == (
+            "session",
+            "test-session",
+            "long-password-2",
+        )
+        return {"changed": True}
+
+    def setup_admin(self, username, password, setup_token):
+        assert (username, password, setup_token) == ("owner", "long-password-1", "")
+        return "setup-session"
+
 
 @pytest.fixture
 def client():
@@ -124,3 +143,50 @@ def test_capability_catalog_http_and_mcp_serialization(client):
     assert len(response.json())>=120
     result=client.post('/mcp/',headers={'Accept':'application/json, text/event-stream','Authorization':'Bearer amcp_test'},json={'jsonrpc':'2.0','id':10,'method':'tools/call','params':{'name':'ads_capabilities','arguments':{}}})
     assert result.status_code==200 and not result.json()['result'].get('isError'),result.text
+
+
+def test_setup_state_is_public(client):
+    result = client.get("/api/setup")
+    assert result.status_code == 200 and result.json()["needs_setup"] is True
+
+
+def test_setup_signs_in_and_rejects_cross_origin(client):
+    body = {"username": "owner", "password": "long-password-1"}
+    denied = client.post(
+        "/api/setup", headers={"Origin": "https://evil.example"}, json=body
+    )
+    assert denied.status_code == 403
+    result = client.post(
+        "/api/setup", headers={"Origin": "http://127.0.0.1:16666"}, json=body
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["username"] == "owner" and result.json()["csrf_token"]
+    assert result.cookies.get("ads_session") == "setup-session"
+
+
+def test_reset_password_is_public_but_same_origin(client):
+    body = {"username": "owner", "password": "long-password-1"}
+    denied = client.post(
+        "/api/password/reset", headers={"Origin": "https://evil.example"}, json=body
+    )
+    assert denied.status_code == 403
+    result = client.post(
+        "/api/password/reset", headers={"Origin": "http://127.0.0.1:16666"}, json=body
+    )
+    assert result.status_code == 200 and result.json() == {"reset": True}
+    assert "ads_session" not in result.cookies
+
+
+def test_change_password_requires_session_and_csrf(client):
+    origin = {"Origin": "http://127.0.0.1:16666"}
+    body = {"password": "long-password-2"}
+    assert client.post("/api/password", headers=origin, json=body).status_code == 401
+    client.cookies.set("ads_session", "test-session")
+    assert client.post("/api/password", headers=origin, json=body).status_code == 403
+    session = client.get("/api/session").json()
+    result = client.post(
+        "/api/password",
+        headers={**origin, "X-CSRF-Token": session["csrf_token"]},
+        json=body,
+    )
+    assert result.status_code == 200 and result.json() == {"changed": True}

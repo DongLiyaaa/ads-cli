@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import sessionmaker
 from .models import Base, User, SchemaVersion
 from .security import password_hash, Problem
@@ -28,8 +28,10 @@ class Database:
                 conn.execute(SchemaVersion.__table__.insert().values(version=1))
         with self.sessions.begin() as s:
             s.execute(text("SELECT pg_advisory_xact_lock(6666, 1)"))
-            if not s.scalar(
-                select(User).where(User.username == settings.admin_username)
+            # Optional env bootstrap; otherwise the first visitor creates the
+            # admin on the setup page (Service.setup_admin, same lock).
+            if settings.admin_password and not s.scalar(
+                select(func.count()).select_from(User)
             ):
                 s.add(
                     User(

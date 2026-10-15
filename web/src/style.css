@@ -412,13 +412,20 @@ code {
 .sidebar footer .user {
   min-width: 0;
   line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sidebar footer small {
   display: block;
   font-weight: 400;
 }
-.sidebar footer button {
+.sidebar footer button:first-of-type {
   margin-left: auto;
+}
+.sidebar footer .icon-button.active {
+  background: var(--blue-soft);
+  color: var(--blue);
 }
 .avatar {
   display: grid;
@@ -1595,6 +1602,26 @@ td pre {
 .login-form > small {
   display: block;
   line-height: 1.7;
+}
+.login-form .callout {
+  margin: 0 0 16px;
+}
+.login-form .field-note,
+.password-form .field-note {
+  margin: -10px 0 16px;
+  min-height: 0;
+}
+.login-form .form-links {
+  display: flex;
+  justify-content: flex-end;
+  margin: -8px 0 12px;
+}
+.login-form > .text-button {
+  width: 100%;
+}
+.password-form {
+  max-width: 460px;
+  padding: 22px;
 }
 
 /* Responsive */

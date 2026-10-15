@@ -244,3 +244,63 @@ def test_post_lists_follow_all_pages_and_detect_repeated_tokens():
     ):
         with pytest.raises(RuntimeError, match="Repeated pagination"):
             client._post_list("/sp/keywords/list", "token", "123", {})
+
+
+def _setup_service(**overrides):
+    from cli_anything.amazon_ads_ops_workbench.control_plane.service import Service
+    from cli_anything.amazon_ads_ops_workbench.control_plane.settings import Settings
+
+    settings = Settings(
+        "postgresql+psycopg://unused",
+        Fernet.generate_key().decode(),
+        "x" * 40,
+        **overrides,
+    )
+    # db=None: every case below must be rejected before touching the database.
+    return Service(None, settings)
+
+
+@pytest.mark.parametrize(
+    "overrides, args, status",
+    [
+        (
+            {"public_origin": "https://ads.example.com", "secure_cookies": True},
+            ("owner", "long-password-1", ""),
+            403,
+        ),
+        ({"setup_token": "expected-token"}, ("owner", "long-password-1", "wrong"), 403),
+        ({}, ("o", "long-password-1", ""), 422),
+        ({}, ("owner name", "long-password-1", ""), 422),
+        ({}, ("owner", "short", ""), 422),
+        ({}, ("owner-account", "OWNER-ACCOUNT", ""), 422),
+    ],
+)
+def test_setup_admin_rejects_before_database(overrides, args, status):
+    with pytest.raises(Problem) as error:
+        _setup_service(**overrides).setup_admin(*args)
+    assert error.value.status == status
+
+
+def test_setup_availability_follows_origin_and_token():
+    assert _setup_service().settings.loopback
+    remote = {"public_origin": "https://ads.example.com", "secure_cookies": True}
+    assert not _setup_service(**remote).settings.loopback
+
+
+@pytest.mark.parametrize(
+    "overrides, args, status",
+    [
+        (
+            {"public_origin": "https://ads.example.com", "secure_cookies": True},
+            ("owner", "long-password-1", ""),
+            403,
+        ),
+        ({"setup_token": "expected-token"}, ("owner", "long-password-1", ""), 403),
+        ({}, ("owner", "short", ""), 422),
+        ({}, ("owner-account", "Owner-Account", ""), 422),
+    ],
+)
+def test_reset_password_rejects_before_database(overrides, args, status):
+    with pytest.raises(Problem) as error:
+        _setup_service(**overrides).reset_password(*args, "127.0.0.1")
+    assert error.value.status == status

@@ -1,6 +1,7 @@
 """Import the owner's existing authorization and verify read-only job persistence."""
 import argparse
 import ast
+import getpass
 from datetime import datetime
 import json
 import os
@@ -26,7 +27,10 @@ for key,value in re.findall(r'^\s*(client_id|client_secret|refresh_token|profile
 assert all(values.get(k) for k in ('client_id','client_secret','refresh_token'))
 base=config['ADS_PUBLIC_ORIGIN']
 client=httpx.Client(base_url=base,timeout=90)
-response=client.post('/api/login',headers={'Origin':base},json={'username':config['ADS_ADMIN_USERNAME'],'password':config['ADS_ADMIN_PASSWORD']})
+# Accounts created on the setup page are not in .env, so prompt for them.
+username=config.get('ADS_ADMIN_USERNAME') or input('Admin username: ')
+password=config.get('ADS_ADMIN_PASSWORD') or getpass.getpass('Admin password: ')
+response=client.post('/api/login',headers={'Origin':base},json={'username':username,'password':password})
 response.raise_for_status()
 headers={'Origin':base,'X-CSRF-Token':response.json()['csrf_token']}
 accounts=client.get('/api/accounts').json()

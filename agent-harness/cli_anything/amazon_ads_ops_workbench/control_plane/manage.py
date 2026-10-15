@@ -17,8 +17,6 @@ def init_env():
         "ADS_DATABASE_URL": f"postgresql+psycopg://ads_app:{password}@postgres:5432/ads_control",
         "ADS_ENCRYPTION_KEY": Fernet.generate_key().decode(),
         "ADS_SESSION_KEY": secrets.token_urlsafe(48),
-        "ADS_ADMIN_USERNAME": "admin",
-        "ADS_ADMIN_PASSWORD": secrets.token_urlsafe(24),
         "ADS_PUBLIC_ORIGIN": "http://127.0.0.1:16666",
         "ADS_SECURE_COOKIES": "false",
         "ADS_API_CONCURRENCY": "3",
@@ -28,7 +26,8 @@ def init_env():
     with os.fdopen(fd, "w") as f:
         f.write("\n".join(f"{k}={v}" for k, v in data.items()) + "\n")
     print(
-        "Created .env (0600). Read ADS_ADMIN_PASSWORD locally; never commit this file."
+        "Created .env (0600); never commit this file. After startup, open the web "
+        "console to create the admin account."
     )
 
 
