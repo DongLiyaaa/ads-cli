@@ -70,3 +70,38 @@ export type SetupState = {
   token_required: boolean;
   available: boolean;
 };
+export type AmcColumn = {
+  name: string;
+  type: string;
+  kind: string;
+  description: string;
+};
+export type AmcSource = {
+  id: string;
+  description: string;
+  tags: string[];
+  premium: boolean;
+  audienceOnly: boolean;
+  columns: AmcColumn[];
+};
+export type AmcTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  sources: string[];
+  sql: string;
+  sqlText: string;
+};
+export type AmcOverview = {
+  available: boolean;
+  reason?: string;
+  instance?: {
+    instanceId: string;
+    instanceType?: string;
+    creationStatus?: string;
+    creationDatetime?: string;
+    optionalDatasets: string[];
+  };
+  dataSources?: AmcSource[];
+  templates: AmcTemplate[];
+};

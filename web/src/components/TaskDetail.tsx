@@ -67,7 +67,7 @@ export function TaskDetail({
   }
 
   return (
-    <Modal title={taskTitle(task.operation)} close={close} wide>
+    <Modal title={taskTitle(task.operation, task.arguments)} close={close} wide>
       <div className="task-meta">
         <Status value={task.status} />
         <code>{task.id}</code>

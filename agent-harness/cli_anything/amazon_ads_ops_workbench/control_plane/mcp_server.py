@@ -124,7 +124,7 @@ def build_mcp(service):
         arguments: dict,
         idempotency_key: str,
     ) -> dict:
-        """Queue an SP/SB/SD report. At most 31 days per task. The worker polls and stores rows in PostgreSQL."""
+        """Queue an SP/SB/SD report (at most 31 days) or an AMC query (operation reports.create-amc-query with template or sql, up to 366 days; see amc.templates via ads_query). The worker polls and stores rows in PostgreSQL."""
         return await call(
             service.create_task,
             actor(ctx),

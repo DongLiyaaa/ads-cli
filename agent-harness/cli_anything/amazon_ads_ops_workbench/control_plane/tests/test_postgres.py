@@ -28,6 +28,7 @@ class FakeClient:
         self.polls = 0
         self.writes = 0
         self.fail_write = False
+        self.amc_fail = False
 
     def create_report(self, *args):
         self.submissions += 1
@@ -41,6 +42,19 @@ class FakeClient:
             "url": "https://fixture.s3.amazonaws.com/report?secret=fixture",
         }
 
+    def amc_create_execution(self, token, entity, instance, body):
+        self.amc_submitted = (entity, instance, body)
+        return {"workflowExecutionId": "exec-fixture", "status": "PENDING"}
+
+    def amc_get_execution(self, token, entity, instance, execution_id):
+        self.polls += 1
+        if self.amc_fail:
+            return {"status": "FAILED", "statusReason": "Syntax error near FROM"}
+        return {"status": "RUNNING" if self.polls == 1 else "SUCCEEDED"}
+
+    def amc_download_urls(self, *args):
+        return ["https://fixture.s3.amazonaws.com/amc.csv?X-Amz-Signature=secret"]
+
     def create_campaign(self, *args):
         self.writes += 1
         if self.fail_write:
@@ -51,6 +65,9 @@ class FakeClient:
 class FakeGateway:
     def __init__(self):
         self.client = FakeClient()
+
+    def amc(self, env, client, token, instance_id=None):
+        return "ENTITYFIXTURE", {"instanceId": instance_id or "amcfixture"}
 
     def context(self, env):
         return (
@@ -231,6 +248,56 @@ class PostgresIntegration(unittest.TestCase):
             with self.assertRaises(Problem):
                 with self.db.api_slot():
                     pass
+
+    def amc_task(self):
+        return self.service.create_task(
+            self.actor,
+            self.account_id,
+            "reports.create-amc-query",
+            {"template": "ad-product-combo", "start_date": "2026-07-01", "end_date": "2026-09-30"},
+            secrets.token_hex(16),
+            "report",
+        )
+
+    def test_amc_query_submits_polls_and_stores_rows(self):
+        task = self.amc_task()
+        csv = "ad_product_combo,reached_users,purchasing_users,purchases,product_sales\nSP,549634,352,395,11336.98\n"
+        worker = Worker(self.service)
+        with patch(
+            "cli_anything.amazon_ads_ops_workbench.control_plane.worker.download_amc_rows",
+            side_effect=lambda urls, limit: __import__(
+                "cli_anything.amazon_ads_ops_workbench.core.amc", fromlist=["x"]
+            ).parse_csv_rows(csv),
+        ):
+            self.assertTrue(worker.run_one())  # submit
+            entity, instance, body = self.gateway.client.amc_submitted
+            self.assertEqual((entity, instance), ("ENTITYFIXTURE", "amcfixture"))
+            self.assertEqual(body["timeWindowEnd"], "2026-10-01T00:00:00")
+            self.assertEqual(self.service.task(self.actor, task["id"])["status"], "WAITING")
+            self.due(task["id"])
+            self.assertTrue(worker.run_one())  # RUNNING
+            self.assertEqual(self.service.task(self.actor, task["id"])["remote_status"], "RUNNING")
+            self.due(task["id"])
+            self.assertTrue(worker.run_one())  # SUCCEEDED
+        detail = self.service.task(self.actor, task["id"])
+        self.assertEqual((detail["status"], detail["row_count"]), ("SUCCEEDED", 1))
+        rows = self.service.result_rows(self.actor, task["id"], 0, 200)
+        self.assertEqual(rows["rows"][0]["purchases"], 395)
+        self.assertEqual(rows["rows"][0]["product_sales"], 11336.98)
+        listed = self.service.tasks(self.actor, kind="report", operation="reports.create-amc-query")
+        self.assertEqual([t["id"] for t in listed], [task["id"]])
+        self.assertEqual(listed[0]["arguments"]["template"], "ad-product-combo")
+
+    def test_amc_failure_reports_reason(self):
+        task = self.amc_task()
+        self.gateway.client.amc_fail = True
+        worker = Worker(self.service)
+        self.assertTrue(worker.run_one())
+        self.due(task["id"])
+        self.assertTrue(worker.run_one())
+        detail = self.service.task(self.actor, task["id"])
+        self.assertEqual(detail["status"], "FAILED")
+        self.assertIn("Syntax error near FROM", detail["error"])
 
     def test_mcp_token_confirms_only_its_own_plan_with_scope(self):
         def token(scopes):

@@ -22,6 +22,7 @@ import { Setup } from "./pages/Setup";
 import { ResetPassword } from "./pages/ResetPassword";
 import { Password } from "./pages/Password";
 import { ReportData } from "./pages/ReportData";
+import { Amc } from "./pages/Amc";
 import { Overview } from "./pages/Overview";
 import { Accounts } from "./pages/Accounts";
 import { Reports } from "./pages/Reports";
@@ -35,6 +36,7 @@ const pages: Record<string, () => ReactNode> = {
   "/accounts": Accounts,
   "/reports": Reports,
   "/data": ReportData,
+  "/amc": Amc,
   "/operations": Operations,
   "/approvals": Approvals,
   "/tokens": Tokens,

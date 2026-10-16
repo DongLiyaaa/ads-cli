@@ -12,6 +12,7 @@ from .models import Task, Account, Token, ReportRow, now, uid
 from .security import Problem, bound_hash, redact
 from .service import audit
 from .contracts import invoke_contract
+from ..core.amc import FINAL_FAILURE_STATUSES as AMC_FAILED, parse_csv_rows
 from ..core.dispatch import execute_approved_operation
 
 
@@ -102,6 +103,33 @@ def download_rows(url, max_bytes):
     if len(rows) > 250000:
         raise ValueError("Report exceeds 250000-row limit; split its date range")
     return rows
+
+
+def download_amc_rows(urls, max_bytes):
+    """AMC results are one or more CSV files behind pre-signed S3 URLs."""
+    if not urls:
+        raise ValueError("AMC execution succeeded but returned no download URL")
+    rows = []
+    for url in urls:
+        validate_download_url(url)
+        with request.build_opener(SafeRedirect()).open(url, timeout=60) as response:
+            data = response.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise ValueError("AMC result exceeds configured size limit")
+        if data[:2] == b"\x1f\x8b":
+            with gzip.GzipFile(fileobj=io.BytesIO(data)) as stream:
+                data = stream.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                raise ValueError("AMC result exceeds configured size limit")
+        rows.extend(parse_csv_rows(data.decode("utf-8-sig")))
+        if len(rows) > 250000:
+            raise ValueError("AMC result exceeds 250000-row limit; narrow the query")
+    return rows
+
+
+def amc_error(result, status):
+    detail = {k: result.get(k) for k in ("statusReason", "errorDetails", "error") if result.get(k)}
+    return f"AMC 查询状态 {status}: " + (json.dumps(detail, ensure_ascii=False) if detail else "Amazon 未返回原因")
 
 
 class Worker:
@@ -280,6 +308,35 @@ class Worker:
                         profiles,
                     )
                     self.finish(task, "SUCCEEDED", result=result)
+                elif task.payload.get("amc"):
+                    instance_id = (task.result or {}).get("instanceId") or task.payload.get("instanceId")
+                    entity, instance = self.service.gateway.amc(env, client, access_token, instance_id)
+                    instance_id = instance["instanceId"]
+                    if not task.remote_id:
+                        self.set_stage(task.id, "SUBMITTING")
+                        sent = True
+                        result = client.amc_create_execution(
+                            access_token, entity, instance_id, task.payload["execution"]
+                        )
+                        self.finish(
+                            task,
+                            "WAITING",
+                            result={"instanceId": instance_id, **result},
+                            remote_id=result["workflowExecutionId"],
+                            remote_status=result.get("status", "PENDING"),
+                        )
+                    else:
+                        result = client.amc_get_execution(access_token, entity, instance_id, task.remote_id)
+                        status = result.get("status", "UNKNOWN")
+                        result = {"instanceId": instance_id, **result}
+                        if status == "SUCCEEDED":
+                            urls = client.amc_download_urls(access_token, entity, instance_id, task.remote_id)
+                            rows = download_amc_rows(urls, self.service.settings.report_max_bytes)
+                            self.finish(task, "SUCCEEDED", result=result, remote_status=status, rows=rows)
+                        elif status in AMC_FAILED:
+                            self.finish(task, "FAILED", result=result, remote_status=status, error=amc_error(result, status))
+                        else:
+                            self.finish(task, "WAITING", result=result, remote_status=status)
                 elif not task.remote_id:
                     self.set_stage(task.id, "SUBMITTING")
                     sent = True

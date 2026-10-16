@@ -111,6 +111,270 @@ def build_sp_search_term_report_body(
     }
 
 
+def build_sp_report_body(
+    name: str,
+    start_date: str,
+    end_date: str,
+    report_type_id: str,
+    group_by: list[str],
+    columns: list[str],
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    normalized_time_unit = time_unit.upper()
+    normalized_columns = list(columns)
+    if normalized_time_unit == "SUMMARY":
+        normalized_columns = [column for column in normalized_columns if column != "date"]
+    return {
+        "name": name,
+        "startDate": start_date,
+        "endDate": end_date,
+        "configuration": {
+            "adProduct": "SPONSORED_PRODUCTS",
+            "groupBy": group_by,
+            "columns": normalized_columns,
+            "reportTypeId": report_type_id,
+            "timeUnit": normalized_time_unit,
+            "format": "GZIP_JSON",
+        },
+    }
+
+
+# Amazon's SP console reports default to 7-day attribution; 14d/30d kept for comparison.
+SP_PERFORMANCE_COLUMNS = [
+    "impressions",
+    "clicks",
+    "clickThroughRate",
+    "costPerClick",
+    "cost",
+    "purchases7d",
+    "sales7d",
+    "unitsSoldClicks7d",
+    "purchases14d",
+    "sales14d",
+    "purchases30d",
+    "sales30d",
+]
+
+
+def build_sp_campaigns_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    return build_sp_report_body(
+        name=f"sp-campaigns-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="spCampaigns",
+        group_by=["campaign"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "campaignStatus",
+            "campaignBiddingStrategy",
+            "campaignBudgetAmount",
+            "campaignBudgetType",
+            "campaignBudgetCurrencyCode",
+            *SP_PERFORMANCE_COLUMNS,
+            "topOfSearchImpressionShare",
+        ],
+        time_unit=time_unit,
+    )
+
+
+def build_sp_ad_groups_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    return build_sp_report_body(
+        name=f"sp-ad-groups-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="spCampaigns",
+        group_by=["adGroup"],
+        # Amazon rejects campaign-level columns under groupBy adGroup.
+        columns=[
+            "date",
+            "adGroupId",
+            "adGroupName",
+            "adStatus",
+            *SP_PERFORMANCE_COLUMNS,
+        ],
+        time_unit=time_unit,
+    )
+
+
+def build_sp_targeting_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    return build_sp_report_body(
+        name=f"sp-targeting-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="spTargeting",
+        group_by=["targeting"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "adGroupId",
+            "adGroupName",
+            "keywordId",
+            "keyword",
+            "keywordType",
+            "matchType",
+            "targeting",
+            "adKeywordStatus",
+            "keywordBid",
+            "campaignBudgetCurrencyCode",
+            *SP_PERFORMANCE_COLUMNS,
+            "topOfSearchImpressionShare",
+        ],
+        time_unit=time_unit,
+    )
+
+
+def build_sp_advertised_products_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    return build_sp_report_body(
+        name=f"sp-advertised-products-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="spAdvertisedProduct",
+        group_by=["advertiser"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "adGroupId",
+            "adGroupName",
+            "adId",
+            "advertisedAsin",
+            "advertisedSku",
+            "campaignBudgetCurrencyCode",
+            *SP_PERFORMANCE_COLUMNS,
+            "purchasesSameSku7d",
+            "attributedSalesSameSku7d",
+            "unitsSoldSameSku7d",
+        ],
+        time_unit=time_unit,
+    )
+
+
+def build_sp_purchased_products_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    """Sales of ASINs other than the advertised one (halo sales)."""
+    return build_sp_report_body(
+        name=f"sp-purchased-products-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="spPurchasedProduct",
+        group_by=["asin"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "adGroupId",
+            "adGroupName",
+            "keywordId",
+            "keyword",
+            "keywordType",
+            "matchType",
+            "advertisedAsin",
+            "advertisedSku",
+            "purchasedAsin",
+            "campaignBudgetCurrencyCode",
+            "purchasesOtherSku7d",
+            "salesOtherSku7d",
+            "unitsSoldOtherSku7d",
+            "purchasesOtherSku14d",
+            "salesOtherSku14d",
+            "unitsSoldOtherSku14d",
+            "purchasesOtherSku30d",
+            "salesOtherSku30d",
+            "unitsSoldOtherSku30d",
+        ],
+        time_unit=time_unit,
+    )
+
+
+def build_sp_impression_share_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    """Top-of-search impression share per keyword/target.
+
+    Reporting v3 has no search-term impression share columns (Amazon rejects
+    searchTermImpressionShare on spSearchTerm); top-of-search share is the
+    impression share the API exposes.
+    """
+    return build_sp_report_body(
+        name=f"sp-impression-share-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="spTargeting",
+        group_by=["targeting"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "adGroupId",
+            "adGroupName",
+            "keywordId",
+            "keyword",
+            "matchType",
+            "targeting",
+            "keywordBid",
+            "campaignBudgetCurrencyCode",
+            "impressions",
+            "clicks",
+            "cost",
+            "topOfSearchImpressionShare",
+        ],
+        time_unit=time_unit,
+    )
+
+
+def build_sp_gross_and_invalids_report_body(
+    start_date: str,
+    end_date: str,
+    time_unit: str = "SUMMARY",
+) -> dict[str, Any]:
+    return build_sp_report_body(
+        name=f"sp-gross-and-invalids-{start_date}-{end_date}",
+        start_date=start_date,
+        end_date=end_date,
+        report_type_id="spGrossAndInvalids",
+        group_by=["campaign"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "campaignStatus",
+            "impressions",
+            "clicks",
+            "grossImpressions",
+            "grossClickThroughs",
+            "invalidImpressions",
+            "invalidClickThroughs",
+            "invalidImpressionRate",
+            "invalidClickThroughRate",
+        ],
+        time_unit=time_unit,
+    )
+
+
 def build_sb_campaigns_report_body(
     start_date: str,
     end_date: str,

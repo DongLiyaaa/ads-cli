@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, DownloadSimple } from "@phosphor-icons/react";
 import { api } from "../api";
-import { reportNames } from "../lib/constants";
 import { stamp } from "../lib/format";
 import {
   columnLabel,
@@ -11,6 +10,7 @@ import {
 } from "../lib/reportColumns";
 import type { RowsPage, Task } from "../lib/types";
 import { Select } from "../components/Select";
+import { reportLabel } from "../components/TaskTable";
 import {
   Empty,
   PageHeader,
@@ -90,7 +90,7 @@ export function ReportData() {
       />
       <section className="panel">
         <PanelHeading
-          title={task ? reportNames[task.operation] || task.operation : "报表数据"}
+          title={task ? reportLabel(task.operation, task.arguments) : "报表数据"}
           description={
             task
               ? `${range(task)} · ${task.row_count.toLocaleString()} 行 · 完成于 ${stamp(task.updated_at)}`
@@ -113,7 +113,7 @@ export function ReportData() {
                 }}
                 options={reports.map((t) => ({
                   value: t.id,
-                  label: `${reportNames[t.operation] || t.operation} · ${range(t)}`,
+                  label: `${reportLabel(t.operation, t.arguments)} · ${range(t)}`,
                   description: `${t.row_count.toLocaleString()} 行 · 完成于 ${stamp(t.updated_at)}`,
                 }))}
               />

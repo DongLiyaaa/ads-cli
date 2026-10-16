@@ -49,7 +49,7 @@ def test_catalog_does_not_expose_local_files_or_approval_execution():
         & {"input_file", "output_dir", "marketplace", "confirm_submit", "dry_run"}
         for r in catalog
     )
-    assert sum(r["kind"] == "report" for r in catalog) == 12
+    assert sum(r["kind"] == "report" for r in catalog) == 20
 
 
 def test_plan_never_calls_upstream_or_writes_local_approval():
@@ -74,7 +74,12 @@ def test_plan_never_calls_upstream_or_writes_local_approval():
 
 
 @pytest.mark.parametrize(
-    "operation", [r["operation"] for r in public_catalog() if r["kind"] == "report"]
+    "operation",
+    [
+        r["operation"]
+        for r in public_catalog()
+        if r["kind"] == "report" and r["operation"] != "reports.create-amc-query"
+    ],
 )
 def test_all_report_builders_prepare_without_network(operation):
     with patch(
@@ -313,3 +318,43 @@ def test_token_without_approve_scope_cannot_confirm():
     with pytest.raises(Problem) as error:
         _setup_service().approve(actor, "task", "确认", "a" * 64)
     assert error.value.status == 403
+
+
+def test_amc_query_plans_without_network():
+    with patch(
+        "cli_anything.amazon_ads_ops_workbench.core.client.AmazonAdsClient.exchange_refresh_token",
+        side_effect=AssertionError("network"),
+    ):
+        body = invoke_contract(
+            "reports.create-amc-query",
+            {"template": "hour-of-day", "start_date": "2026-07-01", "end_date": "2026-09-28"},
+            ENV,
+            "report_plan",
+        )
+    assert body["amc"] is True and body["instanceId"] is None
+    execution = body["execution"]
+    assert "\n" not in execution["workflow"]["sqlQuery"]
+    assert execution["timeWindowEnd"] == "2026-09-29T00:00:00"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"start_date": "2026-07-01", "end_date": "2026-07-07"},
+        {"template": "hour-of-day", "sql": "SELECT 1", "start_date": "2026-07-01", "end_date": "2026-07-07"},
+        {"template": "nope", "start_date": "2026-07-01", "end_date": "2026-07-07"},
+        {"sql": "SELECT 1; SELECT 2", "start_date": "2026-07-01", "end_date": "2026-07-07"},
+        {"template": "hour-of-day", "start_date": "2025-01-01", "end_date": "2026-07-07"},
+    ],
+)
+def test_amc_query_rejects_bad_arguments(arguments):
+    with pytest.raises(Problem) as error:
+        validate_arguments("reports.create-amc-query", arguments)
+    assert error.value.status == 400
+
+
+def test_amc_query_allows_windows_beyond_31_days():
+    validate_arguments(
+        "reports.create-amc-query",
+        {"template": "frequency-vs-conversion", "start_date": "2026-01-01", "end_date": "2026-09-30"},
+    )

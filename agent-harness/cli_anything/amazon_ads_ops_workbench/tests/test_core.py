@@ -1422,6 +1422,32 @@ class CampaignMutationTests(unittest.TestCase):
 
 
 class ReportRequestTests(unittest.TestCase):
+    def test_sp_v3_report_types_use_expected_shape(self):
+        from cli_anything.amazon_ads_ops_workbench.core import reports
+
+        cases = {
+            "build_sp_campaigns_report_body": ("spCampaigns", ["campaign"], "campaignName"),
+            "build_sp_ad_groups_report_body": ("spCampaigns", ["adGroup"], "adGroupName"),
+            "build_sp_targeting_report_body": ("spTargeting", ["targeting"], "targeting"),
+            "build_sp_advertised_products_report_body": ("spAdvertisedProduct", ["advertiser"], "advertisedAsin"),
+            "build_sp_purchased_products_report_body": ("spPurchasedProduct", ["asin"], "purchasedAsin"),
+            "build_sp_impression_share_report_body": ("spTargeting", ["targeting"], "topOfSearchImpressionShare"),
+            "build_sp_gross_and_invalids_report_body": ("spGrossAndInvalids", ["campaign"], "invalidClickThroughs"),
+        }
+        for builder, (report_type, group_by, column) in cases.items():
+            with self.subTest(builder=builder):
+                daily = getattr(reports, builder)("2026-10-01", "2026-10-07", "DAILY")
+                config = daily["configuration"]
+                self.assertEqual(config["adProduct"], "SPONSORED_PRODUCTS")
+                self.assertEqual(config["reportTypeId"], report_type)
+                self.assertEqual(config["groupBy"], group_by)
+                self.assertIn(column, config["columns"])
+                self.assertEqual(config["columns"][0], "date")
+                self.assertEqual(len(config["columns"]), len(set(config["columns"])))
+                summary = getattr(reports, builder)("2026-10-01", "2026-10-07", "summary")
+                self.assertEqual(summary["configuration"]["timeUnit"], "SUMMARY")
+                self.assertNotIn("date", summary["configuration"]["columns"])
+
     def test_build_sp_keywords_report_body_uses_expected_shape(self):
         payload = build_sp_keywords_report_body(
             start_date="2026-07-01",
