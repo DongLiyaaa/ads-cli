@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 import os
 import shlex
 from typing import Any
@@ -76,9 +77,16 @@ from cli_anything.amazon_ads_ops_workbench.core.reports import (
     build_sd_campaigns_report_body,
     build_sd_product_ads_report_body,
     build_sd_targeting_report_body,
+    build_sp_ad_groups_report_body,
+    build_sp_advertised_products_report_body,
     build_sp_campaign_placement_report_body,
+    build_sp_campaigns_report_body,
+    build_sp_gross_and_invalids_report_body,
     build_sp_keywords_report_body,
+    build_sp_purchased_products_report_body,
+    build_sp_impression_share_report_body,
     build_sp_search_term_report_body,
+    build_sp_targeting_report_body,
     load_report_rows,
     normalize_report_status,
     normalize_sb_report_row,
@@ -87,6 +95,13 @@ from cli_anything.amazon_ads_ops_workbench.core.reports import (
     normalize_search_term_report_row,
     normalize_sp_keyword_report_row,
     summarize_report_rows,
+)
+from cli_anything.amazon_ads_ops_workbench.core.amc import (
+    build_execution_body as build_amc_execution_body,
+    public_templates as public_amc_templates,
+    resolve_query as resolve_amc_query,
+    summarize_data_sources as summarize_amc_data_sources,
+    summarize_instance as summarize_amc_instance,
 )
 from cli_anything.amazon_ads_ops_workbench.core.sponsored_brands import (
     assert_sb_raw_allowed,
@@ -6113,6 +6128,241 @@ def create_report_from_builder(
     )
 
 
+@reports.command("create-sp-campaigns")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--start-date", required=True, help="Report start date in YYYY-MM-DD.")
+@click.option("--end-date", required=True, help="Report end date in YYYY-MM-DD.")
+@click.option("--time-unit", default="SUMMARY", help="SUMMARY or DAILY.")
+@click.pass_context
+def reports_create_sp_campaigns(
+    ctx: click.Context,
+    marketplace: str | None,
+    start_date: str,
+    end_date: str,
+    time_unit: str,
+) -> None:
+    """SP campaign performance report."""
+    create_report_from_builder(
+        ctx,
+        marketplace,
+        start_date,
+        end_date,
+        time_unit,
+        build_sp_campaigns_report_body,
+        "spCampaigns",
+        ["campaign"],
+    )
+
+
+@reports.command("create-sp-ad-groups")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--start-date", required=True, help="Report start date in YYYY-MM-DD.")
+@click.option("--end-date", required=True, help="Report end date in YYYY-MM-DD.")
+@click.option("--time-unit", default="SUMMARY", help="SUMMARY or DAILY.")
+@click.pass_context
+def reports_create_sp_ad_groups(
+    ctx: click.Context,
+    marketplace: str | None,
+    start_date: str,
+    end_date: str,
+    time_unit: str,
+) -> None:
+    """SP ad group performance report."""
+    create_report_from_builder(
+        ctx,
+        marketplace,
+        start_date,
+        end_date,
+        time_unit,
+        build_sp_ad_groups_report_body,
+        "spCampaigns",
+        ["adGroup"],
+    )
+
+
+@reports.command("create-sp-targeting")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--start-date", required=True, help="Report start date in YYYY-MM-DD.")
+@click.option("--end-date", required=True, help="Report end date in YYYY-MM-DD.")
+@click.option("--time-unit", default="SUMMARY", help="SUMMARY or DAILY.")
+@click.pass_context
+def reports_create_sp_targeting(
+    ctx: click.Context,
+    marketplace: str | None,
+    start_date: str,
+    end_date: str,
+    time_unit: str,
+) -> None:
+    """SP keyword and product targeting report."""
+    create_report_from_builder(
+        ctx,
+        marketplace,
+        start_date,
+        end_date,
+        time_unit,
+        build_sp_targeting_report_body,
+        "spTargeting",
+        ["targeting"],
+    )
+
+
+@reports.command("create-sp-advertised-products")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--start-date", required=True, help="Report start date in YYYY-MM-DD.")
+@click.option("--end-date", required=True, help="Report end date in YYYY-MM-DD.")
+@click.option("--time-unit", default="SUMMARY", help="SUMMARY or DAILY.")
+@click.pass_context
+def reports_create_sp_advertised_products(
+    ctx: click.Context,
+    marketplace: str | None,
+    start_date: str,
+    end_date: str,
+    time_unit: str,
+) -> None:
+    """SP advertised product report."""
+    create_report_from_builder(
+        ctx,
+        marketplace,
+        start_date,
+        end_date,
+        time_unit,
+        build_sp_advertised_products_report_body,
+        "spAdvertisedProduct",
+        ["advertiser"],
+    )
+
+
+@reports.command("create-sp-purchased-products")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--start-date", required=True, help="Report start date in YYYY-MM-DD.")
+@click.option("--end-date", required=True, help="Report end date in YYYY-MM-DD.")
+@click.option("--time-unit", default="SUMMARY", help="SUMMARY or DAILY.")
+@click.pass_context
+def reports_create_sp_purchased_products(
+    ctx: click.Context,
+    marketplace: str | None,
+    start_date: str,
+    end_date: str,
+    time_unit: str,
+) -> None:
+    """SP purchased product report (sales of other ASINs)."""
+    create_report_from_builder(
+        ctx,
+        marketplace,
+        start_date,
+        end_date,
+        time_unit,
+        build_sp_purchased_products_report_body,
+        "spPurchasedProduct",
+        ["asin"],
+    )
+
+
+@reports.command("create-sp-impression-share")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--start-date", required=True, help="Report start date in YYYY-MM-DD.")
+@click.option("--end-date", required=True, help="Report end date in YYYY-MM-DD.")
+@click.option("--time-unit", default="SUMMARY", help="SUMMARY or DAILY.")
+@click.pass_context
+def reports_create_sp_impression_share(
+    ctx: click.Context,
+    marketplace: str | None,
+    start_date: str,
+    end_date: str,
+    time_unit: str,
+) -> None:
+    """SP top-of-search impression share per keyword/target."""
+    create_report_from_builder(
+        ctx,
+        marketplace,
+        start_date,
+        end_date,
+        time_unit,
+        build_sp_impression_share_report_body,
+        "spTargeting",
+        ["targeting"],
+    )
+
+
+@reports.command("create-sp-gross-and-invalids")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--start-date", required=True, help="Report start date in YYYY-MM-DD.")
+@click.option("--end-date", required=True, help="Report end date in YYYY-MM-DD.")
+@click.option("--time-unit", default="SUMMARY", help="SUMMARY or DAILY.")
+@click.pass_context
+def reports_create_sp_gross_and_invalids(
+    ctx: click.Context,
+    marketplace: str | None,
+    start_date: str,
+    end_date: str,
+    time_unit: str,
+) -> None:
+    """SP gross and invalid traffic report."""
+    create_report_from_builder(
+        ctx,
+        marketplace,
+        start_date,
+        end_date,
+        time_unit,
+        build_sp_gross_and_invalids_report_body,
+        "spGrossAndInvalids",
+        ["campaign"],
+    )
+
+
+@reports.command("create-amc-query")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--start-date", required=True, help="Query window start date in YYYY-MM-DD (advertiser time zone).")
+@click.option("--end-date", required=True, help="Query window end date in YYYY-MM-DD, inclusive. AMC data lags about 48 hours.")
+@click.option("--template", default=None, help="Built-in AMC template id; see `amc templates`. Use either --template or --sql.")
+@click.option("--sql", default=None, help="Custom AMC SQL (aggregate SELECT; no LIMIT, top-level ORDER BY or SELECT *).")
+@click.option("--time-zone", default=None, help="IANA time zone for the window, e.g. America/Los_Angeles.")
+@click.option("--instance-id", default=None, help="AMC instance id; defaults to the account's first ready instance.")
+@click.pass_context
+def reports_create_amc_query(
+    ctx: click.Context,
+    marketplace: str | None,
+    start_date: str,
+    end_date: str,
+    template: str | None,
+    sql: str | None,
+    time_zone: str | None,
+    instance_id: str | None,
+) -> None:
+    """Run an Amazon Marketing Cloud SQL query; results arrive as rows asynchronously."""
+    try:
+        query, template_id = resolve_amc_query(template, sql)
+        body = build_amc_execution_body(query, start_date, end_date, time_zone)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from None
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "amc", health, "execution", {"template": template_id, "startDate": start_date, "endDate": end_date}
+            ),
+            ctx.obj["json"],
+        )
+        return
+    from cli_anything.amazon_ads_ops_workbench.core.runtime import current_runtime
+
+    runtime = current_runtime.get()
+    if runtime is not None and runtime.mode == "report_plan":
+        client.amc_create_execution("", "", instance_id, body)
+        return
+    entity, instance = client.amc_context(access_token, instance_id)
+    result = client.amc_create_execution(access_token, entity, instance["instanceId"], body)
+    emit(
+        {
+            "meta": {"mode": "live", "status": "connected", "marketplace": target_marketplace},
+            "data": {"instanceId": instance["instanceId"], "execution": result, "template": template_id},
+        },
+        ctx.obj["json"],
+    )
+
+
 @reports.command("create-sb-campaigns")
 @click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
 @click.option("--start-date", required=True, help="Report start date in YYYY-MM-DD.")
@@ -6551,6 +6801,92 @@ def reports_parse_sd_report(ctx: click.Context, input_file: str) -> None:
                 "summary": summarize_report_rows(rows),
                 "rows": rows,
             },
+        },
+        ctx.obj["json"],
+    )
+
+
+@cli.group()
+def amc() -> None:
+    """Amazon Marketing Cloud discovery commands; queries run via `reports create-amc-query`."""
+
+
+@amc.command("templates")
+def amc_templates() -> None:
+    """List built-in AMC query templates (local; no API call)."""
+    emit({"meta": {"mode": "local"}, "data": {"templates": public_amc_templates()}}, True)
+
+
+@amc.command("instances")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.pass_context
+def amc_instances(ctx: click.Context, marketplace: str | None) -> None:
+    """Show the AMC instance linked to this advertiser (entity resolved automatically)."""
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(marketplace)
+    if not health["ok"]:
+        emit(build_domain_fallback("amc", health, "instances"), ctx.obj["json"])
+        return
+    entity, instance = client.amc_context(access_token)
+    emit(
+        {
+            "meta": {"mode": "live", "status": "connected", "marketplace": target_marketplace},
+            "data": {"instances": [summarize_amc_instance(instance)]},
+        },
+        ctx.obj["json"],
+    )
+
+
+@amc.command("data-sources")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--source", default=None, help="Return full columns for one data source, e.g. sponsored_ads_traffic.")
+@click.option("--instance-id", default=None, help="AMC instance id; defaults to the first ready instance.")
+@click.pass_context
+def amc_data_sources(
+    ctx: click.Context, marketplace: str | None, source: str | None, instance_id: str | None
+) -> None:
+    """List AMC tables usable in SQL; pass --source for its columns."""
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(marketplace)
+    if not health["ok"]:
+        emit(build_domain_fallback("amc", health, "dataSources"), ctx.obj["json"])
+        return
+    entity, instance = client.amc_context(access_token, instance_id)
+    sources = summarize_amc_data_sources(
+        client.amc_data_sources(access_token, entity, instance["instanceId"])
+    )
+    if source:
+        sources = [s for s in sources if s["id"] == source]
+        if not sources:
+            raise click.UsageError("AMC 数据表不存在: " + source)
+    else:
+        sources = [{**{k: v for k, v in s.items() if k != "columns"}, "columnCount": len(s["columns"])} for s in sources]
+    emit(
+        {
+            "meta": {"mode": "live", "status": "connected", "marketplace": target_marketplace},
+            "data": {"instanceId": instance["instanceId"], "dataSources": sources},
+        },
+        ctx.obj["json"],
+    )
+
+
+@amc.command("executions")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--days", default=7, type=click.IntRange(1, 90), help="Look back this many days.")
+@click.option("--instance-id", default=None, help="AMC instance id; defaults to the first ready instance.")
+@click.pass_context
+def amc_executions(ctx: click.Context, marketplace: str | None, days: int, instance_id: str | None) -> None:
+    """List recent AMC query executions, including ones started outside this tool."""
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(marketplace)
+    if not health["ok"]:
+        emit(build_domain_fallback("amc", health, "executions"), ctx.obj["json"])
+        return
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    entity, instance = client.amc_context(access_token, instance_id)
+    rows = client.amc_list_executions(access_token, entity, instance["instanceId"], since)
+    keep = ("workflowExecutionId", "workflowId", "status", "statusReason", "createTime", "timeWindowStart", "timeWindowEnd")
+    emit(
+        {
+            "meta": {"mode": "live", "status": "connected", "marketplace": target_marketplace},
+            "data": {"instanceId": instance["instanceId"], "executions": [{k: r.get(k) for k in keep} for r in rows]},
         },
         ctx.obj["json"],
     )

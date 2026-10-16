@@ -24,9 +24,14 @@ const ARROWS: Record<string, number> = {
   ArrowDown: 7,
 };
 
-function presets(today: string) {
+type Preset = { label: string; range: string[]; disabled?: boolean };
+
+function presets(today: string, maxDays: number): Preset[] {
   const y = shiftDays(today, -1),
     month = monthStart(today);
+  const long = [90, 180, 365]
+    .filter((d) => d <= maxDays)
+    .map((d) => ({ label: `近 ${d} 天`, range: [shiftDays(y, -(d - 1)), y] }));
   return [
     { label: "昨天", range: [y, y] },
     { label: "近 7 天", range: [shiftDays(y, -6), y] },
@@ -34,6 +39,7 @@ function presets(today: string) {
     { label: "近 30 天", range: [shiftDays(y, -29), y] },
     { label: "本月", range: [month, y], disabled: y < month },
     { label: "上个月", range: [shiftMonths(month, -1), shiftDays(month, -1)] },
+    ...long,
   ];
 }
 
@@ -239,7 +245,7 @@ export function DateRangePicker({
           onKeyDown={onPanelKey}
         >
           <div className="date-presets" role="group" aria-label="快捷范围">
-            {presets(today).map((p) => (
+            {presets(today, maxDays).map((p) => (
               <button
                 type="button"
                 key={p.label}

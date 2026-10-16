@@ -1,13 +1,26 @@
 import { CaretRight } from "@phosphor-icons/react";
-import { kindNames, reportNames } from "../lib/constants";
+import {
+  AMC_OPERATION,
+  amcTemplateNames,
+  kindNames,
+  reportNames,
+} from "../lib/constants";
 import { accountName, stamp } from "../lib/format";
 import { describeOperation } from "../lib/operations";
 import type { Task } from "../lib/types";
 import { useWorkspace } from "../workspace";
 import { Empty, Status } from "./ui";
 
+/** Report label without the 报表 suffix, used by the data table. */
+export function reportLabel(operation: string, args?: Record<string, any>) {
+  if (operation === AMC_OPERATION)
+    return `AMC · ${amcTemplateNames[args?.template] || (args?.template ? args.template : "自定义 SQL")}`;
+  return reportNames[operation] || operation;
+}
+
 /** Report tasks use their report label; other operations get "SP · 资源 · 动作". */
-export function taskTitle(operation: string) {
+export function taskTitle(operation: string, args?: Record<string, any>) {
+  if (operation === AMC_OPERATION) return reportLabel(operation, args);
   if (reportNames[operation]) return `${reportNames[operation]}报表`;
   const info = describeOperation(operation);
   return `${info.product} · ${info.title}`;
@@ -43,7 +56,7 @@ export function TaskTable({
           {items.map((t) => (
             <tr key={t.id}>
               <td>
-                <strong>{taskTitle(t.operation)}</strong>
+                <strong>{taskTitle(t.operation, t.arguments)}</strong>
                 <small>
                   <span className="kind">{kindNames[t.kind] || t.kind}</span>
                   <span className="mono">{t.operation}</span>

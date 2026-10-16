@@ -259,6 +259,10 @@ def create_app(settings=None, service=None):
     def verify(account_id: str, actor=Depends(session_actor)):
         return service.verify_account(actor, account_id)
 
+    @app.get("/api/accounts/{account_id}/amc")
+    def amc(account_id: str, refresh: bool = False, actor=Depends(session_actor)):
+        return service.amc_overview(actor, account_id, refresh)
+
     @app.get("/api/tokens")
     def tokens(actor=Depends(session_actor)):
         return service.tokens(actor)
@@ -311,11 +315,12 @@ def create_app(settings=None, service=None):
         status: str | None = None,
         kind: Literal["read", "report", "write"] | None = None,
         account_id: str | None = Query(None, max_length=36),
+        operation: str | None = Query(None, max_length=100),
         offset: int = Query(0, ge=0),
         limit: int = Query(50, ge=1, le=100),
         actor=Depends(session_actor),
     ):
-        return service.tasks(actor, status, offset, limit, kind, account_id)
+        return service.tasks(actor, status, offset, limit, kind, account_id, operation)
 
     @app.get("/api/tasks/{task_id}")
     def task(task_id: str, actor=Depends(session_actor)):

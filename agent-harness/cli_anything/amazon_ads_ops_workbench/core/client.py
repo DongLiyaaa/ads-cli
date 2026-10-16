@@ -1405,6 +1405,149 @@ class AmazonAdsClient:
             raise RuntimeError("Get report status failed: payload is not an object")
         return data
 
+    def list_ads_accounts(self, access_token: str) -> list[dict[str, Any]]:
+        """Account Management API; alternateIds carry the sponsored ads entity IDs."""
+        media = "application/vnd.listaccountsresource.v1+json"
+        accounts: list[dict[str, Any]] = []
+        next_token, seen = None, set()
+        while True:
+            body: dict[str, Any] = {"maxResults": 100}
+            if next_token:
+                body["nextToken"] = next_token
+            req = request.Request(
+                f"{get_region_base_url(self.env.region)}/adsAccounts/list",
+                method="POST",
+                data=json.dumps(body).encode("utf-8"),
+                headers={**self._build_headers(access_token), "Content-Type": media, "Accept": media},
+            )
+            data = self._send_json(req, "Ads accounts list")
+            accounts.extend(a for a in data.get("adsAccounts") or [] if isinstance(a, dict))
+            next_token = data.get("nextToken")
+            if not next_token or next_token in seen:
+                return accounts
+            seen.add(next_token)
+
+    def _amc_send(
+        self,
+        access_token: str,
+        entity_id: str,
+        method: str,
+        path: str,
+        label: str,
+        body: dict[str, Any] | None = None,
+    ) -> Any:
+        from .amc import MARKETPLACE_IDS
+
+        marketplace = MARKETPLACE_IDS.get((self.env.marketplace or "").upper())
+        if not marketplace:
+            raise RuntimeError(f"{label} failed: AMC 不支持站点 {self.env.marketplace}")
+        req = request.Request(
+            f"{get_region_base_url(self.env.region)}{path}",
+            method=method,
+            data=json.dumps(body).encode("utf-8") if body is not None else None,
+            headers={
+                **self._build_headers(access_token),
+                "Content-Type": "application/json",
+                "Amazon-Advertising-API-AdvertiserId": entity_id,
+                "Amazon-Advertising-API-MarketplaceId": marketplace,
+            },
+        )
+        return self._send_json(req, label)
+
+    def amc_context(
+        self, access_token: str, instance_id: str | None = None
+    ) -> tuple[str, dict[str, Any]]:
+        """Resolve (sponsored ads entity ID, AMC instance) for this profile."""
+        from .amc import pick_entity, pick_instance
+
+        entity = pick_entity(
+            self.list_ads_accounts(access_token), self.env.marketplace, self.env.profile_id
+        )
+        data = self._amc_send(access_token, entity, "GET", "/amc/instances", "AMC instances")
+        return entity, pick_instance(data.get("instances") or [], instance_id)
+
+    def amc_data_sources(
+        self, access_token: str, entity_id: str, instance_id: str
+    ) -> list[dict[str, Any]]:
+        sources: list[dict[str, Any]] = []
+        next_token, seen = None, set()
+        while True:
+            query = "?" + parse.urlencode({"nextToken": next_token}) if next_token else ""
+            data = self._amc_send(
+                access_token,
+                entity_id,
+                "GET",
+                f"/amc/reporting/{parse.quote(instance_id)}/dataSources{query}",
+                "AMC data sources",
+            )
+            sources.extend(data.get("dataSources") or [])
+            next_token = data.get("nextToken")
+            if not next_token or next_token in seen:
+                return sources
+            seen.add(next_token)
+
+    def amc_list_executions(
+        self, access_token: str, entity_id: str, instance_id: str, min_creation_time: str
+    ) -> list[dict[str, Any]]:
+        query = parse.urlencode({"minCreationTime": min_creation_time})
+        data = self._amc_send(
+            access_token,
+            entity_id,
+            "GET",
+            f"/amc/reporting/{parse.quote(instance_id)}/workflowExecutions?{query}",
+            "AMC executions",
+        )
+        return data.get("executions") or data.get("workflowExecutions") or []
+
+    def amc_create_execution(
+        self,
+        access_token: str,
+        entity_id: str,
+        instance_id: str | None,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        from .runtime import current_runtime
+
+        runtime = current_runtime.get()
+        if runtime is not None and runtime.mode == "report_plan":
+            # The worker resolves the entity and instance when it submits.
+            runtime.report = {"amc": True, "instanceId": instance_id, "execution": body}
+            return {"workflowExecutionId": "local-plan", "status": "LOCAL_ONLY"}
+        data = self._amc_send(
+            access_token,
+            entity_id,
+            "POST",
+            f"/amc/reporting/{parse.quote(instance_id or '')}/workflowExecutions",
+            "Create AMC execution",
+            body,
+        )
+        if not isinstance(data, dict) or not data.get("workflowExecutionId"):
+            raise RuntimeError("Create AMC execution failed: workflowExecutionId missing")
+        return data
+
+    def amc_get_execution(
+        self, access_token: str, entity_id: str, instance_id: str, execution_id: str
+    ) -> dict[str, Any]:
+        return self._amc_send(
+            access_token,
+            entity_id,
+            "GET",
+            f"/amc/reporting/{parse.quote(instance_id)}/workflowExecutions/{parse.quote(execution_id)}",
+            "Get AMC execution",
+        )
+
+    def amc_download_urls(
+        self, access_token: str, entity_id: str, instance_id: str, execution_id: str
+    ) -> list[str]:
+        data = self._amc_send(
+            access_token,
+            entity_id,
+            "GET",
+            f"/amc/reporting/{parse.quote(instance_id)}/workflowExecutions/{parse.quote(execution_id)}/downloadUrls",
+            "AMC download URLs",
+        )
+        return [u for u in data.get("downloadUrls") or [] if isinstance(u, str)]
+
     def download_report_file(self, url: str, output_path: str) -> dict[str, Any]:
         try:
             with request.urlopen(url, timeout=60) as resp:

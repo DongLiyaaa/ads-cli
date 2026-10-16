@@ -7,9 +7,11 @@ from datetime import date
 import click
 from ..amazon_ads_ops_workbench_cli import cli
 from ..core.runtime import OperationRuntime, operation_runtime
+from ..core.amc import check_window as check_amc_window, resolve_query as resolve_amc_query
 from .security import Problem
 
 HIDDEN = {"marketplace", "dry_run", "confirm_submit"}
+AMC_QUERY = "reports.create-amc-query"
 EXCLUDED_GROUPS = {"auth", "profiles", "approvals"}
 FILE_OPTIONS = {"input_file", "output_dir", "output_file"}
 
@@ -116,7 +118,13 @@ def validate_arguments(operation, arguments):
             raise Problem(
                 400, "原始接口路径必须在指定广告类型内，不允许查询串或路径跳转"
             )
-    if entry["kind"] == "report":
+    if operation == AMC_QUERY:
+        try:
+            resolve_amc_query(arguments.get("template"), arguments.get("sql"))
+            check_amc_window(arguments.get("start_date"), arguments.get("end_date"))
+        except ValueError as exc:
+            raise Problem(400, str(exc)) from None
+    elif entry["kind"] == "report":
         try:
             start, end = (
                 date.fromisoformat(arguments["start_date"]),

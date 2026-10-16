@@ -32,6 +32,11 @@ from .security import (
     redact,
 )
 from .contracts import invoke_contract, validate_arguments
+from ..core.amc import (
+    public_templates as public_amc_templates,
+    summarize_data_sources as summarize_amc_data_sources,
+    summarize_instance as summarize_amc_instance,
+)
 
 
 USERNAME = re.compile(r"[A-Za-z0-9._@-]{3,64}")
@@ -97,7 +102,22 @@ def task_json(t, detail=False):
 class Gateway:
     def __init__(self):
         self.cache = {}
+        self.amc_cache = {}
         self.lock = threading.Lock()
+
+    def amc(self, env, client, token, instance_id=None):
+        """(entity ID, AMC instance) for an account; both rarely change."""
+        key = token_hash(
+            "|".join([env.client_id, env.refresh_token, env.region, env.marketplace, env.profile_id, instance_id or ""])
+        )
+        with self.lock:
+            cached = self.amc_cache.get(key)
+        if cached and cached[0] > time.monotonic():
+            return cached[1]
+        value = client.amc_context(token, instance_id)
+        with self.lock:
+            self.amc_cache[key] = (time.monotonic() + 1800, value)
+        return value
 
     def context(self, env):
         key = token_hash(
@@ -130,6 +150,7 @@ class Service:
         self.db, self.settings = db, settings
         self.gateway = gateway or Gateway()
         self.dummy_hash = password_hash(secrets.token_urlsafe(24))
+        self.amc_cache = {}
 
     def attempt(self, s, key, message):
         # The lock also covers the absent-row case on first attempt.
@@ -353,6 +374,42 @@ class Service:
             audit(s, actor.user_id, "account.verified", account=a.id)
         return account_json(a)
 
+    def amc_overview(self, actor, account_id, refresh=False):
+        """AMC instance, SQL-usable tables and templates for the web console."""
+        actor.require("ads:read")
+        with self.db.sessions() as s:
+            a = self.account(s, actor, account_id)
+        env = self.environment(a)
+        key = (actor.user_id, a.id)
+        with self.gateway.lock:
+            cached = self.amc_cache.get(key)
+        if cached and cached[0] > time.monotonic() and not refresh:
+            return cached[1]
+        try:
+            with self.db.api_slot():
+                client, token, _, _ = self.gateway.context(env)
+                entity, instance = self.gateway.amc(env, client, token)
+                sources = client.amc_data_sources(token, entity, instance["instanceId"])
+            value = {
+                "available": True,
+                "instance": summarize_amc_instance(instance),
+                "dataSources": summarize_amc_data_sources(sources),
+            }
+        except Problem:
+            raise
+        except Exception as exc:
+            message = str(redact(str(exc)))
+            value = {
+                "available": False,
+                "reason": "AMC 未授权：请用该 Amazon 账号登录 AMC 控制台接受条款后重试"
+                if " 403 " in message or "Unauthorized" in message
+                else message[:500],
+            }
+        value["templates"] = public_amc_templates()
+        with self.gateway.lock:
+            self.amc_cache[key] = (time.monotonic() + (1800 if value["available"] else 60), value)
+        return value
+
     def create_token(self, actor, name, scopes, account_ids, days):
         if actor.kind != "session":
             raise Problem(403, "仅管理页面可生成 Token")
@@ -516,7 +573,9 @@ class Service:
         with self.db.sessions() as s:
             return task_json(self.owned_task(s, actor, task_id), True)
 
-    def tasks(self, actor, status=None, offset=0, limit=50, kind=None, account_id=None):
+    def tasks(
+        self, actor, status=None, offset=0, limit=50, kind=None, account_id=None, operation=None
+    ):
         with self.db.sessions() as s:
             q = select(Task).where(Task.owner_id == actor.user_id)
             if actor.kind == "token":
@@ -527,6 +586,8 @@ class Service:
                 q = q.where(Task.kind == kind)
             if account_id:
                 q = q.where(Task.account_id == account_id)
+            if operation:
+                q = q.where(Task.operation == operation)
             rows = s.scalars(
                 q.order_by(Task.created_at.desc()).offset(offset).limit(limit)
             ).all()
