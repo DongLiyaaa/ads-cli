@@ -7,6 +7,7 @@ import {
   PencilSimple,
   Plugs,
   Plus,
+  ShieldCheck,
   WarningCircle,
   XCircle,
 } from "@phosphor-icons/react";
@@ -99,6 +100,12 @@ export function Servers() {
           </button>
         }
       />
+      <div className="callout info">
+        <ShieldCheck size={20} weight="fill" />
+        <p>
+          为防止 API 关联，建议采用服务器隔离：每个店铺绑定一台独立的转发服务器，不同店铺不要共用同一台服务器（同一出口 IP）。
+        </p>
+      </div>
       {!servers.length ? (
         <section className="panel">
           <Empty

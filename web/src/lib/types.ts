@@ -82,6 +82,7 @@ export type MCPToken = {
   account_ids: string[];
   created_at: string;
   expires_at: string;
+  permanent: boolean;
   revoked: boolean;
   can_reveal: boolean;
   last_used_at: string | null;
@@ -92,6 +93,8 @@ export type LogEntry = {
   status: string;
   account_id: string | null;
   task_id: string | null;
+  token_name: string | null;
+  token_prefix: string | null;
   detail: unknown;
   created_at: string;
 };

@@ -1,6 +1,6 @@
 import base64
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import re
@@ -44,6 +44,10 @@ from ..core.amc import (
     summarize_data_sources as summarize_amc_data_sources,
     summarize_instance as summarize_amc_instance,
 )
+
+# Permanent MCP tokens use a far-future expiry instead of NULL, so every
+# expiry check (and older releases on rollback) keeps working unchanged.
+NEVER_EXPIRES = datetime(9999, 1, 1, tzinfo=timezone.utc)  # margin for any session time zone
 
 
 USERNAME = re.compile(r"[A-Za-z0-9._@-]{3,64}")
@@ -785,7 +789,7 @@ class Service:
                 token_hash=token_hash(raw),
                 scopes=sorted(set(scopes)),
                 account_ids=sorted(set(account_ids)),
-                expires_at=now() + timedelta(days=days),
+                expires_at=NEVER_EXPIRES if days is None else now() + timedelta(days=days),
                 token_ciphertext=encrypt_config({"token": raw}, self.settings.encryption_key),
             )
             s.add(t)
@@ -801,6 +805,7 @@ class Service:
             "token": raw,
             "prefix": t.prefix,
             "expires_at": t.expires_at.isoformat(),
+            "permanent": t.expires_at >= NEVER_EXPIRES,
         }
 
     def tokens(self, actor):
@@ -819,6 +824,7 @@ class Service:
                     "account_ids": t.account_ids,
                     "created_at": t.created_at.isoformat(),
                     "expires_at": t.expires_at.isoformat(),
+                    "permanent": t.expires_at >= NEVER_EXPIRES,
                     "revoked": bool(t.revoked_at),
                     "can_reveal": bool(t.token_ciphertext)
                     and not t.revoked_at
@@ -1171,6 +1177,33 @@ class Service:
             rows = s.scalars(
                 q.order_by(Audit.created_at.desc()).offset(offset).limit(limit)
             ).all()
+            # Attribute each row to an MCP token without an audit column, so old
+            # rows resolve too: an explicit detail.token_id wins (None = web),
+            # otherwise the token that submitted the row's task.
+            task_ids = {r.task_id for r in rows if r.task_id}
+            task_tokens = dict(
+                s.execute(
+                    select(Task.id, Task.source_token_id).where(Task.id.in_(task_ids))
+                ).all()
+            ) if task_ids else {}
+            row_tokens = {}
+            for r in rows:
+                detail = r.detail if isinstance(r.detail, dict) else {}
+                token_id = (
+                    detail.get("token_id")
+                    if "token_id" in detail
+                    else task_tokens.get(r.task_id)
+                )
+                row_tokens[r.id] = token_id if isinstance(token_id, str) else None
+            token_ids = {v for v in row_tokens.values() if v}
+            names = {
+                t.id: (t.name, t.prefix)
+                for t in s.scalars(
+                    select(Token).where(
+                        Token.id.in_(token_ids), Token.owner_id == actor.user_id
+                    )
+                )
+            } if token_ids else {}
             return [
                 {
                     "id": r.id,
@@ -1178,6 +1211,8 @@ class Service:
                     "status": r.status,
                     "account_id": r.account_id,
                     "task_id": r.task_id,
+                    "token_name": names.get(row_tokens[r.id], (None, None))[0],
+                    "token_prefix": names.get(row_tokens[r.id], (None, None))[1],
                     "detail": r.detail,
                     "created_at": r.created_at.isoformat(),
                 }

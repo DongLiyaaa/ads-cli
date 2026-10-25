@@ -490,6 +490,50 @@ class PostgresIntegration(unittest.TestCase):
             self.service.delete_token(self.actor, live["id"])
         self.assertEqual(error.exception.status, 404)
 
+    def test_permanent_token(self):
+        forever = self.service.create_token(self.actor, "forever", ["ads:read"], [self.account_id], None)
+        dated = self.service.create_token(self.actor, "dated", ["ads:read"], [self.account_id], 1)
+        self.assertTrue(forever["permanent"])
+        self.assertFalse(dated["permanent"])
+        listed = {t["id"]: t for t in self.service.tokens(self.actor)}
+        self.assertTrue(listed[forever["id"]]["permanent"])
+        self.assertTrue(listed[forever["id"]]["can_reveal"])
+        self.assertFalse(listed[dated["id"]]["permanent"])
+        self.assertEqual(self.service.authenticate_token(forever["token"]).token_id, forever["id"])
+        rotated = self.service.rotate_token(self.actor, forever["id"])
+        self.assertTrue({t["id"]: t for t in self.service.tokens(self.actor)}[forever["id"]]["permanent"])
+        self.service.revoke_token(self.actor, forever["id"])
+        with self.assertRaises(Problem):
+            self.service.authenticate_token(rotated["token"])
+
+    def test_logs_show_token_name(self):
+        issued = self.service.create_token(self.actor, "agent-a", ["reports:create"], [self.account_id], 7)
+        bot = self.service.authenticate_token(issued["token"])
+        task = self.service.create_task(
+            bot,
+            self.account_id,
+            "reports.create-sp-keywords",
+            {"start_date": "2026-10-01", "end_date": "2026-10-07"},
+            secrets.token_hex(16),
+            "report",
+        )
+        web_task = self.service.create_task(
+            self.actor,
+            self.account_id,
+            "reports.create-sp-keywords",
+            {"start_date": "2026-10-01", "end_date": "2026-10-07"},
+            secrets.token_hex(16),
+            "report",
+        )
+        self.service.delete_token(self.actor, issued["id"])
+        logs = self.service.logs(self.actor, 0, 200)
+        by_task = {l["task_id"]: l for l in logs if l["action"] == "task.created"}
+        self.assertEqual(by_task[task["id"]]["token_name"], "agent-a")
+        self.assertEqual(by_task[task["id"]]["token_prefix"], issued["prefix"])
+        self.assertIsNone(by_task[web_task["id"]]["token_name"])
+        created = [l for l in logs if l["action"] == "token.created" and l["detail"]["token_id"] == issued["id"]]
+        self.assertEqual(created[0]["token_name"], "agent-a")
+
     def test_rename_account(self):
         renamed = self.service.rename_account(self.actor, self.account_id, "  新店铺名  ")
         self.assertEqual(renamed["label"], "新店铺名")
@@ -562,6 +606,14 @@ class PostgresIntegration(unittest.TestCase):
                 },
             )
             self.assertEqual(generated.status_code, 200, generated.text)
+            self.assertFalse(generated.json()["permanent"])
+            body = {"name": "forever", "scopes": ["ads:read"], "account_ids": [self.account_id]}
+            forever = client.post("/api/tokens", headers=headers, json={**body, "expires_in_days": None})
+            self.assertEqual(forever.status_code, 200, forever.text)
+            self.assertTrue(forever.json()["permanent"])
+            for bad in (0, 366, "never"):
+                rejected = client.post("/api/tokens", headers=headers, json={**body, "expires_in_days": bad})
+                self.assertEqual(rejected.status_code, 422, bad)
             raw = generated.json()["token"]
             self.assertNotIn(raw, client.get("/api/tokens").text)
             token_id = generated.json()["id"]

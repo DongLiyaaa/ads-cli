@@ -12,7 +12,7 @@ export function accountName(accounts: Account[], id: string) {
 
 export function tokenState(t: MCPToken) {
   if (t.revoked) return { tone: "cancelled", label: "已撤销" };
-  if (new Date(t.expires_at) < new Date())
+  if (!t.permanent && new Date(t.expires_at) < new Date())
     return { tone: "failed", label: "已过期" };
   return { tone: "succeeded", label: "有效" };
 }

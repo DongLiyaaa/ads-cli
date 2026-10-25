@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { ArrowsClockwise, Copy, Eye, Key, Plus } from "@phosphor-icons/react";
+import {
+  ArrowsClockwise,
+  Copy,
+  Eye,
+  Key,
+  LinkSimple,
+  Plus,
+} from "@phosphor-icons/react";
 import { api } from "../api";
 import { scopeNames } from "../lib/constants";
 import { accountName, stamp, tokenState } from "../lib/format";
@@ -44,22 +51,28 @@ export function Tokens() {
     );
     return r.token;
   }
-  function copyToken(t: MCPToken) {
-    void action("copy:" + t.id, async () => {
-      const value = await reveal(t);
+  const endpoint = (overview.mcp_endpoint || location.origin + "/mcp").replace(
+    /\/?$/,
+    "/",
+  );
+  function copyToken(t: MCPToken, withEndpoint = false) {
+    void action((withEndpoint ? "connect:" : "copy:") + t.id, async () => {
+      const token = await reveal(t);
+      // MCP address + Authorization header, ready to paste into a client.
+      const value = withEndpoint
+        ? `${endpoint}\nAuthorization: Bearer ${token}`
+        : token;
       try {
         await navigator.clipboard.writeText(value);
-        setNotice(`已复制 Token：${t.name}`);
+        setNotice(
+          withEndpoint ? `已复制接入地址和 Token：${t.name}` : `已复制 Token：${t.name}`,
+        );
       } catch {
         // Some browsers drop clipboard access after the request; copy from the dialog instead.
         setRevealed({ token: t, value });
       }
     });
   }
-  const endpoint = (overview.mcp_endpoint || location.origin + "/mcp").replace(
-    /\/?$/,
-    "/",
-  );
   return (
     <>
       <PageHeader
@@ -176,7 +189,7 @@ export function Tokens() {
                           </span>
                         ))}
                       </td>
-                      <td>{stamp(t.expires_at)}</td>
+                      <td>{t.permanent ? "永久有效" : stamp(t.expires_at)}</td>
                       <td>{stamp(t.last_used_at)}</td>
                       <td>
                         <Status value={state.tone} label={state.label} />
@@ -192,6 +205,16 @@ export function Tokens() {
                               >
                                 <Copy size={15} />
                                 {busy === "copy:" + t.id ? "正在复制…" : "复制"}
+                              </button>
+                              <button
+                                className="text-button"
+                                disabled={!!busy}
+                                onClick={() => copyToken(t, true)}
+                              >
+                                <LinkSimple size={15} />
+                                {busy === "connect:" + t.id
+                                  ? "正在复制…"
+                                  : "复制地址+Token"}
                               </button>
                               <button
                                 className="text-button"

@@ -18,7 +18,9 @@ export function TokenModal({ close }: { close: () => void }) {
               name: f.get("name"),
               scopes: f.getAll("scope"),
               account_ids: f.getAll("account"),
-              expires_in_days: Number(f.get("days")),
+              // "never" → null: the token stays valid until revoked or deleted.
+              expires_in_days:
+                f.get("days") === "never" ? null : Number(f.get("days")),
             });
             setOneTime(result.token);
             close();
@@ -43,6 +45,11 @@ export function TokenModal({ close }: { close: () => void }) {
               { value: "7", label: "7 天", description: "适合测试与临时接入" },
               { value: "30", label: "30 天", description: "适合日常使用" },
               { value: "90", label: "90 天", description: "适合长期运行的自动化" },
+              {
+                value: "never",
+                label: "永久有效",
+                description: "不会自动过期，不再使用时请撤销",
+              },
             ]}
           />
         </div>

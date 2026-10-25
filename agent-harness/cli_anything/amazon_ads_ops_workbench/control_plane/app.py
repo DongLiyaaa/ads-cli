@@ -80,7 +80,8 @@ class TokenInput(Input):
     name: str = Field(min_length=1, max_length=120)
     scopes: list[str] = Field(min_length=1, max_length=5)
     account_ids: list[str] = Field(min_length=1, max_length=100)
-    expires_in_days: int = Field(default=30, ge=1, le=365)
+    # null = never expires (until revoked or deleted).
+    expires_in_days: int | None = Field(default=30, ge=1, le=365)
 
 
 class OperationInput(Input):

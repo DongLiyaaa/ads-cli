@@ -21,6 +21,7 @@ export function Logs() {
                   <th>动作</th>
                   <th>状态</th>
                   <th>账户</th>
+                  <th>Token 名称</th>
                   <th>任务</th>
                   <th>详细信息</th>
                 </tr>
@@ -34,6 +35,16 @@ export function Logs() {
                       <Status value={l.status} />
                     </td>
                     <td>{l.account_id ? accountName(accounts, l.account_id) : "—"}</td>
+                    <td>
+                      {l.token_name ? (
+                        <>
+                          <strong>{l.token_name}</strong>
+                          <small className="mono">{l.token_prefix}…</small>
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td>
                       {l.task_id ? (
                         <button
