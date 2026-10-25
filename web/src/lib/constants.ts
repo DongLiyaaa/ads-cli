@@ -8,6 +8,7 @@ import {
   Buildings,
   Table,
   Funnel,
+  HardDrives,
 } from "@phosphor-icons/react";
 
 export const PAGE_SIZE = 50;
@@ -15,6 +16,7 @@ export const PAGE_SIZE = 50;
 export const navigation = [
   { path: "/", label: "工作概览", icon: SquaresFour },
   { path: "/accounts", label: "广告账户", icon: Buildings },
+  { path: "/servers", label: "转发服务器", icon: HardDrives },
   { path: "/reports", label: "报表与数据", icon: ChartBar },
   { path: "/data", label: "数据表格", icon: Table },
   { path: "/amc", label: "AMC 洞察", icon: Funnel },
@@ -64,6 +66,7 @@ export const reportNames: Record<string, string> = {
   "reports.create-sd-ad-groups": "SD · 广告组",
   "reports.create-sd-product-ads": "SD · 商品广告",
   "reports.create-sd-targeting": "SD · 投放目标",
+  "reports.create-full-funnel-campaigns": "FF · 全流域广告活动",
 };
 export const AMC_OPERATION = "reports.create-amc-query";
 /** Mirrors TEMPLATES in core/amc.py so task lists can name AMC runs offline. */
@@ -74,6 +77,10 @@ export const amcTemplateNames: Record<string, string> = {
   "frequency-vs-conversion": "曝光频次与购买率",
   "search-term-conversion": "搜索词：花费、购买与新客",
   "hour-of-day": "分时段表现",
+  "full-traffic-daily": "全量·广告流量（按日 × 广告活动）",
+  "full-traffic-search-term": "全量·广告流量（按投放 × 搜索词）",
+  "full-conversions-daily": "全量·归因转化（按日 × 广告活动）",
+  "full-conversions-asin": "全量·归因转化（按广告活动 × 购买 ASIN）",
 };
 export const AMC_MAX_DAYS = 366;
 export const kindNames: Record<string, string> = {

@@ -53,6 +53,34 @@ class Account(Base):
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     profile: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # NULL = call Amazon directly; otherwise every call leaves from this relay server.
+    relay_id: Mapped[str | None] = mapped_column(String(36), index=True)
+
+
+class RelayServer(Base):
+    """SSH-managed server that runs ads-relay; credentials are Fernet-encrypted."""
+
+    __tablename__ = "ads_relay_servers"
+    __table_args__ = (UniqueConstraint("owner_id", "name"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("ads_users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    host: Mapped[str] = mapped_column(String(255))
+    ssh_port: Mapped[int] = mapped_column(Integer, default=22)
+    username: Mapped[str] = mapped_column(String(64))
+    auth_type: Mapped[str] = mapped_column(String(16))
+    credentials_ciphertext: Mapped[str] = mapped_column(Text)
+    # Trust-on-first-use SSH host key ("type base64"); cleared when host/port change.
+    host_key: Mapped[str | None] = mapped_column(Text)
+    relay_port: Mapped[int] = mapped_column(Integer, default=8787)
+    relay_secret_ciphertext: Mapped[str | None] = mapped_column(Text)
+    relay_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    relay_version: Mapped[str | None] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="NEW")
+    status_detail: Mapped[dict] = mapped_column(JSONB, default=dict)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    installed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class Token(Base):
@@ -68,6 +96,9 @@ class Token(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Fernet-encrypted plaintext so the owner can copy it again; wiped on revoke.
+    token_ciphertext: Mapped[str | None] = mapped_column(Text)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Task(Base):

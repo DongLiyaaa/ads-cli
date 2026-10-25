@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ArrowRight, WarningCircle } from "@phosphor-icons/react";
+import { AuthorCredit } from "../components/ui";
 import { api, ApiError, setCsrf } from "../api";
 import type { SetupState } from "../lib/types";
 import {
@@ -94,6 +95,7 @@ export function Setup({
           此账号用于登录和确认广告变更，只能创建一次；之后请直接登录。
         </small>
       </form>
+      <AuthorCredit className="login-credit" />
     </main>
   );
 }

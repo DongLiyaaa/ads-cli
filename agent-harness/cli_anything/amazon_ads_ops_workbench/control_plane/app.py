@@ -55,6 +55,27 @@ class AccountInput(Input):
     refresh_token: str = Field(min_length=10, max_length=8192)
 
 
+class AccountLabelInput(Input):
+    label: str = Field(min_length=1, max_length=160)
+
+
+class AccountRelayInput(Input):
+    relay_id: str | None = Field(default=None, max_length=36)
+
+
+class ServerInput(Input):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    host: str | None = Field(default=None, min_length=1, max_length=255)
+    ssh_port: int | None = Field(default=None, ge=1, le=65535)
+    username: str | None = Field(default=None, min_length=1, max_length=64)
+    auth_type: Literal["key", "password"] | None = None
+    password: str | None = Field(default=None, max_length=1024)
+    private_key: str | None = Field(default=None, max_length=16384)
+    passphrase: str | None = Field(default=None, max_length=1024)
+    relay_port: int | None = Field(default=None, ge=1024, le=65535)
+    reset_host_key: bool = False
+
+
 class TokenInput(Input):
     name: str = Field(min_length=1, max_length=120)
     scopes: list[str] = Field(min_length=1, max_length=5)
@@ -255,6 +276,12 @@ def create_app(settings=None, service=None):
     def add_account(data: AccountInput, actor=Depends(session_actor)):
         return service.add_account(actor, data.model_dump())
 
+    @app.patch("/api/accounts/{account_id}")
+    def rename_account(
+        account_id: str, data: AccountLabelInput, actor=Depends(session_actor)
+    ):
+        return service.rename_account(actor, account_id, data.label)
+
     @app.post("/api/accounts/{account_id}/verify")
     def verify(account_id: str, actor=Depends(session_actor)):
         return service.verify_account(actor, account_id)
@@ -262,6 +289,42 @@ def create_app(settings=None, service=None):
     @app.get("/api/accounts/{account_id}/amc")
     def amc(account_id: str, refresh: bool = False, actor=Depends(session_actor)):
         return service.amc_overview(actor, account_id, refresh)
+
+    @app.put("/api/accounts/{account_id}/relay")
+    def account_relay(account_id: str, data: AccountRelayInput, actor=Depends(session_actor)):
+        return service.set_account_relay(actor, account_id, data.relay_id)
+
+    @app.get("/api/servers")
+    def servers(actor=Depends(session_actor)):
+        return service.servers(actor)
+
+    @app.post("/api/servers")
+    def add_server(data: ServerInput, actor=Depends(session_actor)):
+        return service.add_server(actor, data.model_dump())
+
+    @app.patch("/api/servers/{server_id}")
+    def update_server(server_id: str, data: ServerInput, actor=Depends(session_actor)):
+        return service.update_server(actor, server_id, data.model_dump(exclude_unset=True))
+
+    @app.delete("/api/servers/{server_id}")
+    def delete_server(server_id: str, actor=Depends(session_actor)):
+        return service.delete_server(actor, server_id)
+
+    @app.post("/api/servers/{server_id}/test")
+    def test_server(server_id: str, actor=Depends(session_actor)):
+        return service.test_server(actor, server_id)
+
+    @app.post("/api/servers/{server_id}/install")
+    def install_server(server_id: str, actor=Depends(session_actor)):
+        return service.install_server(actor, server_id)
+
+    @app.post("/api/servers/{server_id}/check")
+    def check_server(server_id: str, actor=Depends(session_actor)):
+        return service.check_server(actor, server_id)
+
+    @app.post("/api/servers/{server_id}/uninstall")
+    def uninstall_server(server_id: str, actor=Depends(session_actor)):
+        return service.uninstall_server(actor, server_id)
 
     @app.get("/api/tokens")
     def tokens(actor=Depends(session_actor)):
@@ -276,6 +339,18 @@ def create_app(settings=None, service=None):
     @app.post("/api/tokens/{token_id}/revoke")
     def revoke(token_id: str, actor=Depends(session_actor)):
         return service.revoke_token(actor, token_id)
+
+    @app.post("/api/tokens/{token_id}/reveal")
+    def reveal(token_id: str, actor=Depends(session_actor)):
+        return service.reveal_token(actor, token_id)
+
+    @app.post("/api/tokens/{token_id}/rotate")
+    def rotate(token_id: str, actor=Depends(session_actor)):
+        return service.rotate_token(actor, token_id)
+
+    @app.delete("/api/tokens/{token_id}")
+    def delete_token(token_id: str, actor=Depends(session_actor)):
+        return service.delete_token(actor, token_id)
 
     @app.post("/api/queries")
     def query(data: OperationInput, actor=Depends(session_actor)):
@@ -334,6 +409,15 @@ def create_app(settings=None, service=None):
         actor=Depends(session_actor),
     ):
         return service.result_rows(actor, task_id, offset, limit)
+
+    @app.get("/api/tasks/{task_id}/summary")
+    def summary(
+        task_id: str,
+        metrics: str = Query(min_length=1, max_length=2000),
+        group_by: str | None = Query(None, max_length=64),
+        actor=Depends(session_actor),
+    ):
+        return service.result_summary(actor, task_id, group_by, metrics.split(","))
 
     @app.get("/api/tasks/{task_id}/export")
     def export(task_id: str, actor=Depends(session_actor)):

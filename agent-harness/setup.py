@@ -16,7 +16,8 @@ setup(
     ],
     extras_require={
         'server': ['fastapi>=0.115,<1', 'uvicorn>=0.30,<1', 'sqlalchemy>=2,<3',
-                   'psycopg[binary]>=3.2,<4', 'mcp>=1.20,<2', 'cryptography>=44'],
+                   'psycopg[binary]>=3.2,<4', 'mcp>=1.20,<2', 'cryptography>=44',
+                   'paramiko>=3.4,<6'],
     },
     entry_points={
         "console_scripts": [

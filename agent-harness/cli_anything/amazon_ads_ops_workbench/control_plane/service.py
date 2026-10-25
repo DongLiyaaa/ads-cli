@@ -1,4 +1,7 @@
+import base64
+from contextlib import contextmanager
 from datetime import timedelta
+import hashlib
 import hmac
 import re
 import secrets
@@ -8,6 +11,9 @@ from sqlalchemy import delete, select, func, text
 from sqlalchemy.exc import IntegrityError
 from ..core.client import AmazonAdsClient
 from ..core.env import AdsEnvironment
+from ..core import relay as relay_transport
+from ..core.relay import RelayEndpoint
+from . import servers as ssh
 from .models import (
     User,
     Session,
@@ -15,6 +21,7 @@ from .models import (
     Token,
     Task,
     Audit,
+    RelayServer,
     ReportRow,
     LoginAttempt,
     now,
@@ -40,6 +47,17 @@ from ..core.amc import (
 
 
 USERNAME = re.compile(r"[A-Za-z0-9._@-]{3,64}")
+SSH_USER = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._-]{0,63}")
+HOSTNAME = re.compile(r"[A-Za-z0-9.:\[\]-]{1,255}")
+# Served by the relay when egress works; any HTTP answer proves the route.
+EGRESS_PROBE = "https://advertising-api.amazon.com/"
+
+
+def new_token_value():
+    return "amcp_" + secrets.token_urlsafe(40)
+
+
+FIELD = re.compile(r"[A-Za-z0-9_]{1,64}")
 
 
 def audit(s, owner, action, status="OK", account=None, task=None, detail=None):
@@ -66,6 +84,36 @@ def account_json(a):
         "currency": a.profile.get("currencyCode"),
         "timezone": a.profile.get("timezone"),
         "created_at": a.created_at.isoformat(),
+        "relay_id": a.relay_id,
+    }
+
+
+def host_fingerprint(host_key):
+    if not host_key:
+        return None
+    digest = hashlib.sha256(base64.b64decode(host_key.split()[-1])).digest()
+    return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
+
+
+def server_json(r, accounts=()):
+    return {
+        "id": r.id,
+        "name": r.name,
+        "host": r.host,
+        "ssh_port": r.ssh_port,
+        "username": r.username,
+        "auth_type": r.auth_type,
+        "relay_port": r.relay_port,
+        "status": r.status,
+        "checks": (r.status_detail or {}).get("checks", []),
+        "message": (r.status_detail or {}).get("message"),
+        "host_fingerprint": host_fingerprint(r.host_key),
+        "installed": bool(r.relay_secret_ciphertext),
+        "relay_version": r.relay_version,
+        "checked_at": r.checked_at.isoformat() if r.checked_at else None,
+        "installed_at": r.installed_at.isoformat() if r.installed_at else None,
+        "created_at": r.created_at.isoformat(),
+        "accounts": [{"id": a.id, "label": a.label} for a in accounts],
     }
 
 
@@ -88,6 +136,8 @@ def task_json(t, detail=False):
     if t.kind == "report":
         # Report arguments are just the date range; lists show it without detail.
         value["arguments"] = t.arguments
+        if isinstance(t.result, dict) and isinstance(t.result.get("privacy"), dict):
+            value["privacy"] = t.result["privacy"]
     if detail:
         result = t.result
         value.update(
@@ -99,6 +149,11 @@ def task_json(t, detail=False):
     return value
 
 
+def relay_key(env):
+    relay = getattr(env, "relay", None)
+    return f"|relay:{relay.id}:{relay.fingerprint}" if relay else ""
+
+
 class Gateway:
     def __init__(self):
         self.cache = {}
@@ -108,7 +163,7 @@ class Gateway:
     def amc(self, env, client, token, instance_id=None):
         """(entity ID, AMC instance) for an account; both rarely change."""
         key = token_hash(
-            "|".join([env.client_id, env.refresh_token, env.region, env.marketplace, env.profile_id, instance_id or ""])
+            "|".join([env.client_id, env.refresh_token, env.region, env.marketplace, env.profile_id, instance_id or "", relay_key(env)])
         )
         with self.lock:
             cached = self.amc_cache.get(key)
@@ -121,7 +176,7 @@ class Gateway:
 
     def context(self, env):
         key = token_hash(
-            env.client_id + env.client_secret + env.refresh_token + env.region
+            env.client_id + env.client_secret + env.refresh_token + env.region + relay_key(env)
         )
         with self.lock:
             cached = self.cache.get(key)
@@ -310,7 +365,22 @@ class Service:
             raise Problem(404, "账户不存在或不可访问")
         return account
 
+    def relay_endpoint(self, account):
+        if not account.relay_id:
+            return None
+        with self.db.sessions() as s:
+            r = s.get(RelayServer, account.relay_id)
+        if not r or r.owner_id != account.owner_id or not r.relay_secret_ciphertext:
+            # Never fall back to direct calls: the account asked for this egress.
+            raise Problem(409, f"店铺「{account.label}」绑定的转发服务器不可用（未安装或已删除），请重新安装或切回本地直连")
+        return self.relay_of(r)
+
+    def relay_of(self, r):
+        secret = decrypt_config(r.relay_secret_ciphertext, self.settings.encryption_key)["secret"]
+        return RelayEndpoint(r.id, r.name, r.host.strip("[]"), r.relay_port, r.relay_fingerprint, secret)
+
     def environment(self, account):
+        relay = self.relay_endpoint(account)
         config = decrypt_config(
             account.credentials_ciphertext, self.settings.encryption_key
         )
@@ -321,6 +391,7 @@ class Service:
             profile_id=account.profile_id,
             region=account.region,
             marketplace=account.marketplace,
+            relay=relay,
         )
 
     def accounts(self, actor):
@@ -355,6 +426,294 @@ class Service:
                 audit(s, actor.user_id, "account.created", account=a.id)
         except IntegrityError:
             raise Problem(409, "该 Profile 已存在") from None
+        return account_json(a)
+
+    def rename_account(self, actor, account_id, label):
+        if actor.kind != "session":
+            raise Problem(403, "仅管理页面可修改账户")
+        label = label.strip()
+        if not label:
+            raise Problem(422, "店铺名称不能为空")
+        with self.db.sessions.begin() as s:
+            a = self.account(s, actor, account_id)
+            before, a.label = a.label, label
+            audit(s, actor.user_id, "account.renamed", account=a.id, detail={"from": before, "to": label})
+        return account_json(a)
+
+    # ---- relay servers (SSH-managed egress) ----
+
+    def require_session(self, actor):
+        if actor.kind != "session":
+            raise Problem(403, "仅管理页面可管理转发服务器")
+
+    def owned_server(self, s, actor, server_id, lock=False):
+        query = select(RelayServer).where(RelayServer.id == server_id, RelayServer.owner_id == actor.user_id)
+        r = s.scalar(query.with_for_update() if lock else query)
+        if not r:
+            raise Problem(404, "转发服务器不存在")
+        return r
+
+    def bound_accounts(self, s, r):
+        return s.scalars(
+            select(Account).where(Account.owner_id == r.owner_id, Account.relay_id == r.id).order_by(Account.label)
+        ).all()
+
+    def servers(self, actor):
+        self.require_session(actor)
+        with self.db.sessions() as s:
+            rows = s.scalars(
+                select(RelayServer).where(RelayServer.owner_id == actor.user_id).order_by(RelayServer.created_at)
+            ).all()
+            return [server_json(r, self.bound_accounts(s, r)) for r in rows]
+
+    def server_fields(self, data, creating):
+        fields = {}
+        for key in ("name", "host", "username"):
+            if key in data and data[key] is not None:
+                fields[key] = data[key].strip()
+        if "name" in fields and not 1 <= len(fields["name"]) <= 120:
+            raise Problem(422, "服务器名称需为 1–120 个字符")
+        if "host" in fields and not HOSTNAME.fullmatch(fields["host"]):
+            raise Problem(422, "服务器地址只能是域名或 IP")
+        if "username" in fields and not SSH_USER.fullmatch(fields["username"]):
+            raise Problem(422, "SSH 用户名格式不正确")
+        for key, low in (("ssh_port", 1), ("relay_port", 1024)):
+            if data.get(key) is not None:
+                if not low <= int(data[key]) <= 65535:
+                    raise Problem(422, "SSH 端口需为 1–65535" if key == "ssh_port" else "转发端口需为 1024–65535")
+                fields[key] = int(data[key])
+        if creating and not all(fields.get(k) for k in ("name", "host", "username")):
+            raise Problem(422, "请填写服务器名称、地址和 SSH 用户名")
+        auth = data.get("auth_type")
+        if auth is not None and auth not in {"key", "password"}:
+            raise Problem(422, "认证方式只能是私钥或密码")
+        secret = data.get("password") if auth == "password" else data.get("private_key")
+        if creating or auth:
+            if not auth or not secret:
+                raise Problem(422, "请填写 SSH 密码或私钥")
+            if auth == "key":
+                ssh.load_private_key(secret, data.get("passphrase"))  # fail early on bad keys
+            credentials = (
+                {"password": secret}
+                if auth == "password"
+                else {"private_key": secret.strip() + "\n", "passphrase": data.get("passphrase") or ""}
+            )
+            fields["auth_type"] = auth
+            fields["credentials_ciphertext"] = encrypt_config(credentials, self.settings.encryption_key)
+        return fields
+
+    def add_server(self, actor, data):
+        self.require_session(actor)
+        try:
+            fields = self.server_fields(data, creating=True)
+        except ssh.SSHFailure as exc:
+            raise Problem(422, str(exc)) from None
+        r = RelayServer(owner_id=actor.user_id, status="NEW", status_detail={}, **fields)
+        try:
+            with self.db.sessions.begin() as s:
+                s.add(r)
+                s.flush()
+                audit(s, actor.user_id, "server.created", detail={"server_id": r.id, "host": r.host})
+        except IntegrityError:
+            raise Problem(409, "已有同名转发服务器") from None
+        return server_json(r)
+
+    def update_server(self, actor, server_id, data):
+        self.require_session(actor)
+        try:
+            fields = self.server_fields(data, creating=False)
+        except ssh.SSHFailure as exc:
+            raise Problem(422, str(exc)) from None
+        try:
+            with self.db.sessions.begin() as s:
+                r = self.owned_server(s, actor, server_id, lock=True)
+                if r.relay_secret_ciphertext and fields.get("relay_port", r.relay_port) != r.relay_port:
+                    raise Problem(409, "转发服务已安装，修改端口需要先卸载再重新安装")
+                if fields.get("host", r.host) != r.host or fields.get("ssh_port", r.ssh_port) != r.ssh_port or data.get("reset_host_key"):
+                    r.host_key = None
+                for key, value in fields.items():
+                    setattr(r, key, value)
+                audit(s, actor.user_id, "server.updated", detail={"server_id": r.id, "fields": sorted(k for k in fields if k != "credentials_ciphertext")})
+                s.flush()
+                return server_json(r, self.bound_accounts(s, r))
+        except IntegrityError:
+            raise Problem(409, "已有同名转发服务器") from None
+
+    def delete_server(self, actor, server_id):
+        self.require_session(actor)
+        with self.db.sessions.begin() as s:
+            r = self.owned_server(s, actor, server_id, lock=True)
+            if self.bound_accounts(s, r):
+                raise Problem(409, "仍有店铺使用该服务器转发，请先把它们切回本地直连")
+            s.delete(r)
+            audit(s, actor.user_id, "server.deleted", detail={"server_id": server_id, "host": r.host})
+        return {"deleted": True}
+
+    def remote(self, r):
+        credentials = decrypt_config(r.credentials_ciphertext, self.settings.encryption_key)
+        return ssh.Remote(r.host.strip("[]"), r.ssh_port, r.username, r.auth_type, credentials, r.host_key), credentials
+
+    @contextmanager
+    def server_lock(self, server_id):
+        # One SSH operation per server at a time, across web and worker processes.
+        with self.db.engine.connect() as conn:
+            key = int(token_hash(server_id)[:15], 16)
+            if not conn.scalar(text("SELECT pg_try_advisory_lock(6668, :k)"), {"k": key & 0x7FFFFFFF}):
+                raise Problem(409, "该服务器正在执行其他操作，请稍后再试")
+            try:
+                yield
+            finally:
+                conn.execute(text("SELECT pg_advisory_unlock(6668, :k)"), {"k": key & 0x7FFFFFFF})
+                conn.commit()
+
+    def record_server(self, actor, server_id, action, status, checks=None, message=None, **values):
+        with self.db.sessions.begin() as s:
+            r = self.owned_server(s, actor, server_id, lock=True)
+            r.status, r.checked_at = status, now()
+            r.status_detail = {"checks": checks if checks is not None else (r.status_detail or {}).get("checks", []), "message": message}
+            for key, value in values.items():
+                setattr(r, key, value)
+            audit(s, actor.user_id, action, "OK" if status in {"READY", "INSTALLED"} else status, detail={"server_id": r.id, "status": status, "message": message})
+            s.flush()
+            return server_json(r, self.bound_accounts(s, r))
+
+    def inspect_server(self, r):
+        """SSH in, gather facts and checks; returns (remote host key, facts, checks)."""
+        remote, credentials = self.remote(r)
+        with remote:
+            code, out, err = remote.run(ssh.probe_script(r.relay_port, self.relay_root))
+            if code:
+                raise ssh.SSHFailure(f"环境检测失败：{err.strip()[:300]}")
+            facts = ssh.parse_facts(out)
+            return remote.host_key, facts, ssh.evaluate(facts, r.auth_type, remote.fingerprint)
+
+    # Test hooks: path prefix for every installed file, and the relay bind address.
+    relay_root = ""
+    relay_listen = "0.0.0.0"
+
+    def relay_health(self, r):
+        try:
+            info = relay_transport.health(self.relay_of(r))
+            return {"key": "tls", "label": "加密通道", "ok": True, "detail": f"本机 → {r.host}:{r.relay_port} 连通，证书指纹匹配（ads-relay {info.get('version')} / Python {info.get('python')}）", "required": False}
+        except Exception as exc:
+            return {"key": "tls", "label": "加密通道", "ok": False, "detail": f"{redact(str(exc))[:300]}；请检查安全组是否放行 TCP {r.relay_port}", "required": False}
+
+    def test_server(self, actor, server_id):
+        self.require_session(actor)
+        with self.db.sessions() as s:
+            r = self.owned_server(s, actor, server_id)
+        with self.server_lock(server_id):
+            try:
+                host_key, facts, checks = self.inspect_server(r)
+            except ssh.SSHFailure as exc:
+                return self.record_server(actor, server_id, "server.tested", "ERROR", [], str(exc))
+            if r.relay_secret_ciphertext:
+                checks.append(self.relay_health(r))
+            blocked = [c["label"] for c in checks if c["required"] and not c["ok"]]
+            if r.relay_secret_ciphertext:
+                status = "INSTALLED" if checks[-1]["ok"] else "UNREACHABLE"
+            else:
+                status = "BLOCKED" if blocked else "READY"
+            message = "缺少条件：" + "、".join(blocked) if blocked else None
+            result = self.record_server(actor, server_id, "server.tested", status, checks, message, host_key=r.host_key or host_key)
+        result["plan"] = ssh.install_plan(facts, r.relay_port, self.relay_root)
+        return result
+
+    def install_server(self, actor, server_id):
+        self.require_session(actor)
+        with self.db.sessions() as s:
+            r = self.owned_server(s, actor, server_id)
+        with self.server_lock(server_id):
+            secret = secrets.token_urlsafe(32)
+            try:
+                remote, credentials = self.remote(r)
+                with remote:
+                    code, out, err = remote.run(ssh.probe_script(r.relay_port, self.relay_root))
+                    facts = ssh.parse_facts(out)
+                    checks = ssh.evaluate(facts, r.auth_type, remote.fingerprint)
+                    blocked = [c["label"] for c in checks if c["required"] and not c["ok"]]
+                    if code or blocked:
+                        return self.record_server(actor, server_id, "server.install_failed", "BLOCKED", checks, "无法安装，缺少条件：" + "、".join(blocked or ["环境检测"]))
+                    prefix, stdin = ssh.privilege(facts, r.auth_type, credentials)
+                    cert, key, fingerprint = ssh.make_certificate()
+                    script = ssh.install_script(self.relay_root, r.relay_port, secret, cert, key, self.relay_listen)
+                    code, out, err = ssh.run_as_root(remote, script, prefix, stdin)
+                    host_key = r.host_key or remote.host_key
+            except ssh.SSHFailure as exc:
+                return self.record_server(actor, server_id, "server.install_failed", "ERROR", None, str(exc))
+            if code:
+                tail = (out + "\n" + err).replace(secret, "[REDACTED]").strip()[-800:]
+                return self.record_server(actor, server_id, "server.install_failed", "ERROR", checks, f"安装脚本失败（退出码 {code}）：{tail}")
+            # The remote now holds the new secret; store it even if the port is still closed.
+            self.record_server(
+                actor, server_id, "server.installed", "INSTALLED", checks, None,
+                host_key=host_key,
+                relay_secret_ciphertext=encrypt_config({"secret": secret}, self.settings.encryption_key),
+                relay_fingerprint=fingerprint,
+                relay_version=ssh.relay_agent.VERSION,
+                installed_at=now(),
+            )
+            with self.db.sessions() as s:
+                r = self.owned_server(s, actor, server_id)
+            health = self.relay_health(r)
+            checks = checks + [health]
+            if health["ok"]:
+                return self.record_server(actor, server_id, "server.checked", "INSTALLED", checks)
+            return self.record_server(actor, server_id, "server.checked", "UNREACHABLE", checks, "服务已安装并运行，但本机连不上转发端口；请在安全组放行后点“检查服务”")
+
+    def check_server(self, actor, server_id):
+        """Hub → relay TLS health plus a real egress call to Amazon through it."""
+        self.require_session(actor)
+        with self.db.sessions() as s:
+            r = self.owned_server(s, actor, server_id)
+        if not r.relay_secret_ciphertext:
+            raise Problem(409, "该服务器尚未安装转发服务")
+        checks = [self.relay_health(r)]
+        if checks[0]["ok"]:
+            started = time.monotonic()
+            try:
+                status = relay_transport.probe_egress(self.relay_of(r), EGRESS_PROBE)
+                checks.append({"key": "egress", "label": "Amazon 出口", "ok": True, "detail": f"经 {r.name} 访问 Amazon Ads API 返回 HTTP {status}（未带授权的探测请求，有响应即出口可用），耗时 {int((time.monotonic() - started) * 1000)} ms", "required": False})
+            except Exception as exc:
+                checks.append({"key": "egress", "label": "Amazon 出口", "ok": False, "detail": redact(str(exc))[:300], "required": False})
+        ok = all(c["ok"] for c in checks)
+        return self.record_server(actor, server_id, "server.checked", "INSTALLED" if ok else "UNREACHABLE", checks, None if ok else "转发服务检查未通过")
+
+    def uninstall_server(self, actor, server_id):
+        self.require_session(actor)
+        with self.db.sessions() as s:
+            r = self.owned_server(s, actor, server_id)
+            if self.bound_accounts(s, r):
+                raise Problem(409, "仍有店铺使用该服务器转发，请先把它们切回本地直连")
+        with self.server_lock(server_id):
+            try:
+                remote, credentials = self.remote(r)
+                with remote:
+                    code, out, err = remote.run(ssh.probe_script(r.relay_port, self.relay_root))
+                    prefix, stdin = ssh.privilege(ssh.parse_facts(out), r.auth_type, credentials)
+                    code, out, err = ssh.run_as_root(remote, ssh.uninstall_script(self.relay_root), prefix, stdin)
+            except ssh.SSHFailure as exc:
+                return self.record_server(actor, server_id, "server.uninstall_failed", "ERROR", None, str(exc))
+            if code:
+                return self.record_server(actor, server_id, "server.uninstall_failed", "ERROR", None, f"卸载失败（退出码 {code}）：{(out + err).strip()[-500:]}")
+            return self.record_server(
+                actor, server_id, "server.uninstalled", "NEW", [], "已卸载 ads-relay 并删除其文件和系统用户",
+                relay_secret_ciphertext=None, relay_fingerprint=None, relay_version=None, installed_at=None,
+            )
+
+    def set_account_relay(self, actor, account_id, relay_id):
+        if actor.kind != "session":
+            raise Problem(403, "仅管理页面可修改账户")
+        with self.db.sessions.begin() as s:
+            a = self.account(s, actor, account_id)
+            if relay_id:
+                r = self.owned_server(s, actor, relay_id)
+                if not r.relay_secret_ciphertext:
+                    raise Problem(409, "该服务器尚未安装转发服务")
+            before, a.relay_id = a.relay_id, relay_id or None
+            audit(s, actor.user_id, "account.egress_changed", account=a.id, detail={"from": before, "to": a.relay_id})
+        with self.gateway.lock:
+            self.amc_cache.pop((actor.user_id, account_id), None)
         return account_json(a)
 
     def verify_account(self, actor, account_id):
@@ -415,7 +774,7 @@ class Service:
             raise Problem(403, "仅管理页面可生成 Token")
         if not scopes or not set(scopes) <= SCOPES or not account_ids:
             raise Problem(400, "请选择权限及账户")
-        raw = "amcp_" + secrets.token_urlsafe(40)
+        raw = new_token_value()
         with self.db.sessions.begin() as s:
             for account_id in account_ids:
                 self.account(s, actor, account_id)
@@ -427,6 +786,7 @@ class Service:
                 scopes=sorted(set(scopes)),
                 account_ids=sorted(set(account_ids)),
                 expires_at=now() + timedelta(days=days),
+                token_ciphertext=encrypt_config({"token": raw}, self.settings.encryption_key),
             )
             s.add(t)
             s.flush()
@@ -447,7 +807,7 @@ class Service:
         with self.db.sessions() as s:
             rows = s.scalars(
                 select(Token)
-                .where(Token.owner_id == actor.user_id)
+                .where(Token.owner_id == actor.user_id, Token.deleted_at.is_(None))
                 .order_by(Token.created_at.desc())
             ).all()
             return [
@@ -457,8 +817,12 @@ class Service:
                     "prefix": t.prefix,
                     "scopes": t.scopes,
                     "account_ids": t.account_ids,
+                    "created_at": t.created_at.isoformat(),
                     "expires_at": t.expires_at.isoformat(),
                     "revoked": bool(t.revoked_at),
+                    "can_reveal": bool(t.token_ciphertext)
+                    and not t.revoked_at
+                    and t.expires_at > now(),
                     "last_used_at": t.last_used_at.isoformat()
                     if t.last_used_at
                     else None,
@@ -466,18 +830,66 @@ class Service:
                 for t in rows
             ]
 
+    def owned_token(self, s, actor, token_id):
+        if actor.kind != "session":
+            raise Problem(403, "仅管理页面可管理 Token")
+        t = s.scalar(
+            select(Token)
+            .where(
+                Token.id == token_id,
+                Token.owner_id == actor.user_id,
+                Token.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        if not t:
+            raise Problem(404, "Token 不存在")
+        return t
+
+    def reveal_token(self, actor, token_id):
+        with self.db.sessions.begin() as s:
+            t = self.owned_token(s, actor, token_id)
+            if t.revoked_at or t.expires_at <= now():
+                raise Problem(409, "已撤销或已过期的 Token 不能再查看")
+            if not t.token_ciphertext:
+                raise Problem(409, "该 Token 生成于支持再次查看之前，明文没有保存；点“重新生成”后即可复制")
+            raw = decrypt_config(t.token_ciphertext, self.settings.encryption_key)["token"]
+            audit(s, actor.user_id, "token.revealed", detail={"token_id": t.id})
+        return {"token": raw}
+
+    def rotate_token(self, actor, token_id):
+        # Same name, accounts, scopes and expiry; only the secret changes, so
+        # tokens issued before plaintext was stored can be copied again.
+        raw = new_token_value()
+        with self.db.sessions.begin() as s:
+            t = self.owned_token(s, actor, token_id)
+            if t.revoked_at or t.expires_at <= now():
+                raise Problem(409, "已撤销或已过期的 Token 不能重新生成")
+            t.prefix = raw[:14]
+            t.token_hash = token_hash(raw)
+            t.token_ciphertext = encrypt_config({"token": raw}, self.settings.encryption_key)
+            t.last_used_at = None
+            audit(s, actor.user_id, "token.rotated", detail={"token_id": t.id})
+        return {"id": token_id, "token": raw, "prefix": raw[:14]}
+
     def revoke_token(self, actor, token_id):
         with self.db.sessions.begin() as s:
-            t = s.scalar(
-                select(Token)
-                .where(Token.id == token_id, Token.owner_id == actor.user_id)
-                .with_for_update()
-            )
-            if not t:
-                raise Problem(404, "Token 不存在")
-            t.revoked_at = now()
+            t = self.owned_token(s, actor, token_id)
+            t.revoked_at = t.revoked_at or now()
+            t.token_ciphertext = None
             audit(s, actor.user_id, "token.revoked", detail={"token_id": t.id})
         return {"revoked": True}
+
+    def delete_token(self, actor, token_id):
+        # Soft delete: tasks keep their source_token_id reference, and the
+        # revoked_at check still stops any queued work from that token.
+        with self.db.sessions.begin() as s:
+            t = self.owned_token(s, actor, token_id)
+            t.revoked_at = t.revoked_at or now()
+            t.token_ciphertext = None
+            t.deleted_at = now()
+            audit(s, actor.user_id, "token.deleted", detail={"token_id": t.id})
+        return {"deleted": True}
 
     def create_task(self, actor, account_id, operation, arguments, key, kind):
         if not isinstance(key, str) or not 8 <= len(key) <= 120:
@@ -666,6 +1078,59 @@ class Service:
             t.status = "CANCELLED"
             audit(s, actor.user_id, "task.cancelled", "CANCELLED", t.account_id, t.id)
             return task_json(t)
+
+    def result_summary(self, actor, task_id, group_by, metrics):
+        """Sum numeric fields over every saved row, optionally grouped by one field."""
+        names = [m for m in metrics if m]
+        if not names or len(names) > 40 or len(set(names)) != len(names):
+            raise Problem(400, "请选择 1–40 个不重复的汇总字段")
+        for name in names + ([group_by] if group_by else []):
+            if not FIELD.fullmatch(name):
+                raise Problem(400, "字段名不合法: " + name[:64])
+        if group_by in names:
+            raise Problem(400, "汇总维度不能同时作为汇总字段")
+        with self.db.sessions() as s:
+            t = self.owned_task(s, actor, task_id)
+            if t.kind != "report":
+                raise Problem(400, "只有报表任务支持汇总")
+            # Field names are bound parameters; only the m0..mN aliases are generated.
+            params = {"task": task_id, "group": group_by or ""}
+            sums = []
+            for i, name in enumerate(names):
+                params[f"f{i}"] = name
+                sums.append(
+                    f"SUM(CASE WHEN jsonb_typeof(data->:f{i}) = 'number' THEN (data->>:f{i})::numeric END) AS m{i}"
+                )
+            columns = ", ".join(["COUNT(*) AS n", *sums])
+            base = f"FROM ads_report_rows WHERE task_id = :task"
+
+            def shape(values):
+                # values = (count, sum0, sum1, ...)
+                return {
+                    "rows": values[0],
+                    "sums": {
+                        name: None if values[i + 1] is None else float(values[i + 1])
+                        for i, name in enumerate(names)
+                    },
+                }
+
+            total = shape(tuple(s.execute(text(f"SELECT {columns} {base}"), params).one()))
+            groups, truncated = [], False
+            if group_by:
+                found = s.execute(
+                    text(
+                        f"SELECT data->>:group AS k, {columns} {base} GROUP BY 1 ORDER BY n DESC, 1 LIMIT 2001"
+                    ),
+                    params,
+                ).all()
+                truncated = len(found) > 2000
+                groups = [{"key": row[0], **shape(tuple(row[1:]))} for row in found[:2000]]
+        return {
+            "group_by": group_by,
+            "total": total,
+            "groups": groups,
+            "truncated": truncated,
+        }
 
     def result_rows(self, actor, task_id, offset, limit):
         with self.db.sessions() as s:

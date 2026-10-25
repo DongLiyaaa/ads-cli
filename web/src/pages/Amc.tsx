@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowClockwise,
   ArrowRight,
+  CheckSquare,
   Info,
   Play,
+  Square,
   WarningCircle,
 } from "@phosphor-icons/react";
 import { api } from "../api";
@@ -16,7 +18,7 @@ import { TaskTable } from "../components/TaskTable";
 import { Empty, PageHeader, PanelHeading, Segmented } from "../components/ui";
 import { useWorkspace } from "../workspace";
 
-type Mode = "template" | "sql";
+type Mode = "template" | "full" | "sql";
 
 const SQL_HINT =
   "只支持汇总查询（SUM / COUNT 等）；不支持 LIMIT、顶层 ORDER BY 和 SELECT *；user_id 等个人字段只能用于 COUNT(DISTINCT …)。";
@@ -35,6 +37,8 @@ export function Amc() {
   const [mode, setMode] = useState<Mode>("template");
   const [templateId, setTemplateId] = useState("ad-product-combo");
   const [sql, setSql] = useState("");
+  // Full exports: every template is queued by default.
+  const [skipped, setSkipped] = useState<Record<string, boolean>>({});
   const [runs, setRuns] = useState<Task[]>([]);
   const [search, setSearch] = useState("");
   const [showAudience, setShowAudience] = useState(false);
@@ -77,6 +81,9 @@ export function Amc() {
   }, [accountId]);
 
   const template = overview?.templates.find((t) => t.id === templateId);
+  const analysis = (overview?.templates || []).filter((t) => t.category !== "full");
+  const full = (overview?.templates || []).filter((t) => t.category === "full");
+  const queued = full.filter((t) => !skipped[t.id]);
   const span = daySpan(startDate, endDate);
   const rangeError =
     span === null
@@ -99,7 +106,45 @@ export function Amc() {
       .sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
   }, [overview, search, showAudience]);
 
+  function changeMode(next: Mode) {
+    // Full exports default to the longest window AMC allows, ending at the data lag.
+    if (next === "full" && mode !== "full") {
+      setStartDate(shiftDays(today, -366));
+      setEndDate(shiftDays(today, -2));
+    }
+    setMode(next);
+  }
+
+  function runFull() {
+    if (rangeError || !span || !queued.length) return;
+    void action("amc", async () => {
+      let sent = 0;
+      try {
+        for (const t of queued) {
+          await api<Task>("/reports", "POST", {
+            account_id: accountId,
+            operation: AMC_OPERATION,
+            arguments: {
+              template: t.id,
+              start_date: startDate,
+              end_date: endDate,
+              time_zone: timeZone,
+            },
+            idempotency_key: crypto.randomUUID(),
+          });
+          sent += 1;
+        }
+      } finally {
+        await loadRuns().catch(() => {});
+      }
+      setNotice(
+        `已提交 ${sent} 个全量查询；Amazon 处理通常需要几分钟到几十分钟，完成后在数据表格中查看。`,
+      );
+    });
+  }
+
   function run() {
+    if (mode === "full") return runFull();
     if (rangeError || !span) return;
     void action("amc", async () => {
       const t = await api<Task>("/reports", "POST", {
@@ -201,23 +246,28 @@ export function Amc() {
           <section className="panel">
             <PanelHeading
               title="运行分析"
-              description="选择内置模板，或用自定义 SQL 查询 AMC 数据表。"
+              description={
+                mode === "full"
+                  ? "导出广告流量和归因转化的全部明细，一次提交多个查询。"
+                  : "选择内置模板，或用自定义 SQL 查询 AMC 数据表。"
+              }
             >
               <Segmented
                 label="查询方式"
                 value={mode}
                 options={[
                   { value: "template", label: "分析模板" },
+                  { value: "full", label: "全量数据" },
                   { value: "sql", label: "自定义 SQL" },
                 ]}
-                onChange={setMode}
+                onChange={changeMode}
               />
             </PanelHeading>
             <div className="amc-run">
               {mode === "template" ? (
                 <>
                   <div className="amc-templates" role="radiogroup" aria-label="分析模板">
-                    {overview.templates.map((t) => (
+                    {analysis.map((t) => (
                       <button
                         type="button"
                         role="radio"
@@ -248,6 +298,35 @@ export function Amc() {
                       </button>
                     </details>
                   )}
+                </>
+              ) : mode === "full" ? (
+                <>
+                  <div className="amc-templates" role="group" aria-label="全量数据查询">
+                    {full.map((t) => {
+                      const on = !skipped[t.id];
+                      const Mark = on ? CheckSquare : Square;
+                      return (
+                        <button
+                          type="button"
+                          role="checkbox"
+                          aria-checked={on}
+                          key={t.id}
+                          onClick={() => setSkipped((v) => ({ ...v, [t.id]: on }))}
+                        >
+                          <strong>
+                            <Mark size={16} weight={on ? "fill" : "regular"} aria-hidden="true" />
+                            {t.name}
+                          </strong>
+                          <span>{t.description}</span>
+                          <small className="mono">{t.sources.join(" · ")}</small>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="callout info amc-full-note">
+                    <Info size={18} />
+                    合计值完整。覆盖人数过少的行，Amazon 会保留指标但隐去广告活动、日期等标签，这部分合并为每份结果的最后一行「隐私过滤合并」。流量与转化分开查询能保留最多标签；按日拆分的转化，较大比例的销售额可能无法对应到具体日期和活动，数据表格会显示实际占比。
+                  </p>
                 </>
               ) : (
                 <>
@@ -283,12 +362,20 @@ export function Amc() {
                 <button
                   className="primary"
                   disabled={
-                    !!busy || !span || !!rangeError || (mode === "sql" && !sql.trim())
+                    !!busy ||
+                    !span ||
+                    !!rangeError ||
+                    (mode === "sql" && !sql.trim()) ||
+                    (mode === "full" && !queued.length)
                   }
                   onClick={run}
                 >
                   <Play size={16} weight="fill" />
-                  {busy === "amc" ? "正在提交…" : "运行查询"}
+                  {busy === "amc"
+                    ? "正在提交…"
+                    : mode === "full"
+                      ? `运行 ${queued.length} 个查询`
+                      : "运行查询"}
                 </button>
               </div>
               <p className={rangeError ? "field-note error" : "field-note"}>

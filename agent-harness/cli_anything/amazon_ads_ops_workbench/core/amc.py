@@ -112,6 +112,8 @@ SELECT ad_product_type, time_to_purchase,
 FROM purchases
 GROUP BY ad_product_type, time_to_purchase
 """,
+        "sort": ["ad_product_type", "time_to_purchase"],
+        "order": {"time_to_purchase": ["0-1h", "1-6h", "6-24h", "1-3d", "3-7d", "7d+"]},
     },
     "new-to-brand-by-campaign": {
         "name": "品牌新客（按广告活动）",
@@ -228,6 +230,84 @@ FROM traffic t
 LEFT JOIN conv c ON t.hour_of_day = c.hour_of_day AND t.ad_product_type = c.ad_product_type
 GROUP BY t.hour_of_day, t.ad_product_type
 """,
+        "sort": ["hour_of_day", "ad_product_type"],
+    },
+    # Full exports: traffic and conversions stay separate queries because joining
+    # them makes AMC hide the labels of far more rows (measured on a live instance).
+    "full-traffic-daily": {
+        "name": "全量·广告流量（按日 × 广告活动）",
+        "category": "full",
+        "description": "每天每个广告活动的全部流量指标：曝光、可见曝光、点击、花费、视频播放和触达人数，覆盖 SP / SB / SD。",
+        "sources": ["sponsored_ads_traffic"],
+        "sql": """
+SELECT event_date, ad_product_type, campaign, campaign_id_string AS campaign_id,
+  SUM(impressions) AS impressions,
+  SUM(viewable_impressions) AS viewable_impressions,
+  SUM(clicks) AS clicks,
+  ROUND(SUM(spend) / 100000000.0, 2) AS spend,
+  SUM(five_sec_views) AS five_sec_views,
+  SUM(video_first_quartile_views) AS video_first_quartile_views,
+  SUM(video_midpoint_views) AS video_midpoint_views,
+  SUM(video_third_quartile_views) AS video_third_quartile_views,
+  SUM(video_complete_views) AS video_complete_views,
+  SUM(video_unmutes) AS video_unmutes,
+  COUNT(DISTINCT user_id) AS reached_users
+FROM sponsored_ads_traffic
+GROUP BY event_date, ad_product_type, campaign, campaign_id_string
+""",
+    },
+    "full-traffic-search-term": {
+        "name": "全量·广告流量（按投放 × 搜索词）",
+        "category": "full",
+        "description": "按广告活动、广告组、投放、匹配类型和顾客搜索词汇总曝光、点击、花费和触达人数，是最细的流量明细。",
+        "sources": ["sponsored_ads_traffic"],
+        "sql": """
+SELECT ad_product_type, campaign, campaign_id_string AS campaign_id, ad_group,
+  targeting AS target_expression, match_type, customer_search_term,
+  SUM(impressions) AS impressions,
+  SUM(clicks) AS clicks,
+  ROUND(SUM(spend) / 100000000.0, 2) AS spend,
+  COUNT(DISTINCT user_id) AS reached_users
+FROM sponsored_ads_traffic
+GROUP BY ad_product_type, campaign, campaign_id_string, ad_group, targeting, match_type, customer_search_term
+""",
+    },
+    "full-conversions-daily": {
+        "name": "全量·归因转化（按日 × 广告活动）",
+        "category": "full",
+        "description": "按广告接触日期和广告活动汇总全部归因转化：订单、销量、销售额、品牌新客、加购、详情页浏览和购买人数。",
+        "sources": ["amazon_attributed_events_by_traffic_time"],
+        "sql": """
+SELECT traffic_event_date AS event_date, ad_product_type, campaign, campaign_id_string AS campaign_id,
+  SUM(total_purchases) AS purchases,
+  SUM(new_to_brand_total_purchases) AS ntb_purchases,
+  SUM(total_units_sold) AS units_sold,
+  SUM(total_product_sales) AS product_sales,
+  SUM(new_to_brand_total_product_sales) AS ntb_product_sales,
+  SUM(total_add_to_cart) AS add_to_cart,
+  SUM(total_detail_page_view) AS detail_page_views,
+  COUNT(DISTINCT CASE WHEN total_purchases > 0 THEN user_id END) AS purchasing_users
+FROM amazon_attributed_events_by_traffic_time
+GROUP BY traffic_event_date, ad_product_type, campaign, campaign_id_string
+""",
+    },
+    "full-conversions-asin": {
+        "name": "全量·归因转化（按广告活动 × 购买 ASIN）",
+        "category": "full",
+        "description": "每个广告活动带来的订单具体买了哪些 ASIN，含销量、销售额和品牌新客。",
+        "sources": ["amazon_attributed_events_by_traffic_time"],
+        "sql": """
+SELECT ad_product_type, campaign, campaign_id_string AS campaign_id, tracked_asin,
+  SUM(total_purchases) AS purchases,
+  SUM(new_to_brand_total_purchases) AS ntb_purchases,
+  SUM(total_units_sold) AS units_sold,
+  SUM(total_product_sales) AS product_sales,
+  SUM(new_to_brand_total_product_sales) AS ntb_product_sales,
+  COUNT(DISTINCT user_id) AS purchasing_users
+FROM amazon_attributed_events_by_traffic_time
+WHERE total_purchases > 0
+GROUP BY ad_product_type, campaign, campaign_id_string, tracked_asin
+""",
     },
 }
 
@@ -236,7 +316,8 @@ def public_templates() -> list[dict[str, Any]]:
     return [
         {
             "id": key,
-            **{k: v for k, v in t.items() if k != "sql"},
+            **{k: v for k, v in t.items() if k not in ("sql", "sort", "order")},
+            "category": t.get("category", "analysis"),
             "sql": normalize_sql(t["sql"]),
             "sqlText": t["sql"].strip(),
         }
@@ -423,3 +504,93 @@ def parse_csv_rows(text: str) -> list[dict[str, Any]]:
                 row[key] = float(value)
         rows.append(row)
     return rows
+
+
+_NUMERIC_TYPES = {"LONG", "INTEGER", "INT", "BIGINT", "SHORT", "DOUBLE", "FLOAT", "DECIMAL", "NUMBER"}
+_DIGITS = re.compile(r"(\d+)")
+MERGED_LABEL = "隐私过滤合并（{n} 行）"
+
+
+def _column_type(column: dict[str, Any]) -> str:
+    kind = column.get("dataType")
+    return str(kind.get("type") if isinstance(kind, dict) else kind or "").upper()
+
+
+def _natural(value: Any) -> tuple:
+    """Order "2" before "10" and None last; mixed text and numbers stay comparable."""
+    if value is None:
+        return (2,)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return (0, value)
+    parts = (p for p in _DIGITS.split(str(value).casefold()) if p)
+    return (1, tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in parts))
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def finalize_rows(
+    rows: list[dict[str, Any]],
+    output_columns: list[dict[str, Any]] | None,
+    template: str | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Sort AMC rows by their labels and account for privacy-filtered rows.
+
+    AMC keeps the metrics of rows with too few users but blanks every label, so
+    totals stay complete. Template runs fold those rows into one labelled row at
+    the end; custom SQL keeps them as-is because its metrics may not be sums.
+    """
+    if not rows:
+        return rows, {"rows": 0, "filtered_rows": 0, "merged": False, "shares": {}}
+    columns = [c for c in output_columns or [] if c.get("name") in rows[0]]
+    if columns:
+        labels = [
+            c["name"]
+            for c in columns
+            if c.get("columnType") == "DIMENSION" and _column_type(c) not in _NUMERIC_TYPES
+        ]
+    else:
+        labels = [k for k in rows[0] if not any(_is_number(r.get(k)) for r in rows)]
+    spec = TEMPLATES.get(template or "", {})
+    sort_keys = [k for k in spec.get("sort", labels) if k in rows[0]]
+    order = {k: {v: i for i, v in enumerate(vals)} for k, vals in spec.get("order", {}).items()}
+
+    def key(row: dict[str, Any]) -> tuple:
+        out = []
+        for k in sort_keys:
+            value = row.get(k)
+            rank = order.get(k, {}).get(value)
+            out.append((0, rank) if rank is not None else _natural(value))
+        return tuple(out)
+
+    kept, filtered = [], []
+    for row in rows:
+        hidden = labels and all(row.get(k) is None for k in labels)
+        (filtered if hidden else kept).append(row)
+    kept.sort(key=key)
+    metrics = [k for k in rows[0] if k not in labels and k not in sort_keys]
+    totals = {k: sum(r[k] for r in rows if _is_number(r.get(k))) for k in metrics}
+    lost = {k: sum(r[k] for r in filtered if _is_number(r.get(k))) for k in metrics}
+    privacy = {
+        "rows": len(rows),
+        "filtered_rows": len(filtered),
+        "merged": bool(filtered and template),
+        "shares": {k: round(lost[k] / totals[k] * 100, 2) for k in metrics if totals[k] and lost[k]},
+    }
+    if not filtered:
+        return kept, privacy
+    if not template:
+        return kept + filtered, privacy
+    merged: dict[str, Any] = {}
+    for k in rows[0]:
+        values = [r[k] for r in filtered if _is_number(r.get(k))]
+        if k in metrics and values:
+            total = sum(values)
+            merged[k] = total if all(isinstance(v, int) for v in values) else round(total, 4)
+        else:
+            merged[k] = None
+    # Label every text column (IDs stay empty) so any summary grouping shows it.
+    for k in [k for k in labels if not k.endswith("_id")] or labels[:1]:
+        merged[k] = MERGED_LABEL.format(n=len(filtered))
+    return kept + [merged], privacy

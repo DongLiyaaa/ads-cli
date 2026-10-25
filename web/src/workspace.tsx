@@ -5,6 +5,7 @@ import type {
   LogEntry,
   MCPToken,
   Overview,
+  RelayServer,
   Task,
 } from "./lib/types";
 
@@ -18,6 +19,7 @@ export type Workspace = {
   selected?: Account;
   tasks: Task[];
   tokens: MCPToken[];
+  servers: RelayServer[];
   logs: LogEntry[];
   catalog: Capability[];
   overview: Overview;

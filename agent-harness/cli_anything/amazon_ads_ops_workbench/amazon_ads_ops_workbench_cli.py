@@ -557,7 +557,7 @@ def approvals_execute(ctx: click.Context, plan_id: str, confirm_text: str) -> No
 @click.option(
     "--ad-product",
     default="ALL",
-    type=click.Choice(["ALL", "SP", "SB", "SBV", "SD"], case_sensitive=False),
+    type=click.Choice(["ALL", "SP", "SB", "SBV", "SD", "FF"], case_sensitive=False),
     help="Filter capabilities by ad product.",
 )
 @click.option(
@@ -6363,6 +6363,62 @@ def reports_create_amc_query(
     )
 
 
+@reports.command("create-full-funnel-campaigns")
+@click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
+@click.option("--start-date", required=True, help="Report start date in YYYY-MM-DD.")
+@click.option("--end-date", required=True, help="Report end date in YYYY-MM-DD.")
+@click.option("--time-unit", default="DAILY", help="DAILY or SUMMARY.")
+@click.pass_context
+def reports_create_full_funnel_campaigns(
+    ctx: click.Context,
+    marketplace: str | None,
+    start_date: str,
+    end_date: str,
+    time_unit: str,
+) -> None:
+    """Full-funnel campaigns (全流域广告活动) report via the unified Reporting API v1."""
+    from cli_anything.amazon_ads_ops_workbench.core.runtime import current_runtime
+    from cli_anything.amazon_ads_ops_workbench.core.unified_reports import (
+        build_full_funnel_plan,
+        build_report_body,
+    )
+
+    try:
+        plan = build_full_funnel_plan(start_date, end_date, time_unit)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from None
+    runtime = current_runtime.get()
+    if runtime is not None and runtime.mode == "report_plan":
+        # The worker resolves campaigns and the advertiser account when it submits.
+        runtime.report = plan
+        return
+    env, target_marketplace, client, access_token, profile_id, health = load_live_context(
+        marketplace
+    )
+    if not health["ok"]:
+        emit(
+            build_domain_fallback(
+                "reports", health, "full-funnel", {"startDate": start_date, "endDate": end_date}
+            ),
+            ctx.obj["json"],
+        )
+        return
+    campaign_ids = client.query_campaign_ids(access_token, profile_id, plan["adProduct"])
+    report = None
+    if campaign_ids:
+        account_id = client.advertiser_account_id(access_token, profile_id)
+        report = client.unified_create_report(
+            access_token, build_report_body(plan, account_id, campaign_ids)
+        )
+    emit(
+        {
+            "meta": {"mode": "live", "status": "connected", "marketplace": target_marketplace},
+            "data": {"campaignCount": len(campaign_ids), "report": report},
+        },
+        ctx.obj["json"],
+    )
+
+
 @reports.command("create-sb-campaigns")
 @click.option("--marketplace", default=None, help="Marketplace such as US, CA, or MX.")
 @click.option("--start-date", required=True, help="Report start date in YYYY-MM-DD.")
@@ -6879,7 +6935,7 @@ def amc_executions(ctx: click.Context, marketplace: str | None, days: int, insta
     if not health["ok"]:
         emit(build_domain_fallback("amc", health, "executions"), ctx.obj["json"])
         return
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
     entity, instance = client.amc_context(access_token, instance_id)
     rows = client.amc_list_executions(access_token, entity, instance["instanceId"], since)
     keep = ("workflowExecutionId", "workflowId", "status", "statusReason", "createTime", "timeWindowStart", "timeWindowEnd")

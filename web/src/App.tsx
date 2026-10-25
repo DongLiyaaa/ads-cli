@@ -8,6 +8,7 @@ import type {
   LogEntry,
   MCPToken,
   Overview as OverviewData,
+  RelayServer,
   SetupState,
   Task,
 } from "./lib/types";
@@ -17,6 +18,7 @@ import { Topbar } from "./components/Topbar";
 import { TaskDetail } from "./components/TaskDetail";
 import { AccountModal } from "./components/AccountModal";
 import { TokenModal } from "./components/TokenModal";
+import { AuthorCredit } from "./components/ui";
 import { Login } from "./pages/Login";
 import { Setup } from "./pages/Setup";
 import { ResetPassword } from "./pages/ResetPassword";
@@ -29,11 +31,13 @@ import { Reports } from "./pages/Reports";
 import { Operations } from "./pages/Operations";
 import { Approvals } from "./pages/Approvals";
 import { Tokens } from "./pages/Tokens";
+import { Servers } from "./pages/Servers";
 import { Logs } from "./pages/Logs";
 
 const pages: Record<string, () => ReactNode> = {
   "/": Overview,
   "/accounts": Accounts,
+  "/servers": Servers,
   "/reports": Reports,
   "/data": ReportData,
   "/amc": Amc,
@@ -59,6 +63,7 @@ export default function App() {
     [accountId, setAccountId] = useState(""),
     [tasks, setTasks] = useState<Task[]>([]),
     [tokens, setTokens] = useState<MCPToken[]>([]),
+    [servers, setServers] = useState<RelayServer[]>([]),
     [logs, setLogs] = useState<LogEntry[]>([]),
     [catalog, setCatalog] = useState<Capability[]>([]),
     [overview, setOverview] = useState<OverviewData>({});
@@ -91,6 +96,7 @@ export default function App() {
     setAccounts([]);
     setTasks([]);
     setTokens([]);
+    setServers([]);
     setLogs([]);
     setOverview({});
     setAccountId("");
@@ -141,6 +147,8 @@ export default function App() {
     setAccountId((old) => (a.some((v) => v.id === old) ? old : a[0]?.id || ""));
     setSynced(new Date().toLocaleTimeString("zh-CN", { hour12: false }));
     if (page === "/tokens") setTokens(await api("/tokens"));
+    if (page === "/servers" || page === "/accounts")
+      setServers(await api("/servers"));
     if (page === "/logs")
       setLogs(await api(`/logs?offset=${offset}&limit=${PAGE_SIZE}`));
   }
@@ -251,6 +259,7 @@ export default function App() {
     selected,
     tasks,
     tokens,
+    servers,
     logs,
     catalog,
     overview,
@@ -298,11 +307,11 @@ export default function App() {
             <Page />
           </div>
           <footer className="main-footer">
-            <span>Amazon Ads Ops Workbench</span>
             <span>
-              PostgreSQL 持久化 · API 并发上限{" "}
+              Amazon Ads Ops Workbench · PostgreSQL 持久化 · API 并发上限{" "}
               {overview.max_api_concurrency || 3}
             </span>
+            <AuthorCredit />
           </footer>
         </main>
         {accountModal && <AccountModal close={() => setAccountModal(false)} />}

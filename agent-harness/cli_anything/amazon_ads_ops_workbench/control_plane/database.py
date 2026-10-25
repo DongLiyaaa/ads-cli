@@ -21,6 +21,14 @@ class Database:
         with self.engine.begin() as conn:
             conn.execute(text("SELECT pg_advisory_xact_lock(6666, 0)"))
             Base.metadata.create_all(conn)
+            # create_all never alters existing tables; these columns are additive
+            # and nullable, so older releases keep working against this schema.
+            for column, kind in (("token_ciphertext", "TEXT"), ("deleted_at", "TIMESTAMPTZ")):
+                conn.execute(
+                    text(f"ALTER TABLE ads_mcp_tokens ADD COLUMN IF NOT EXISTS {column} {kind}")
+                )
+            conn.execute(text("ALTER TABLE ads_accounts ADD COLUMN IF NOT EXISTS relay_id VARCHAR(36)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ads_accounts_relay_id ON ads_accounts (relay_id)"))
             versions = conn.execute(select(SchemaVersion.version)).scalars().all()
             if versions and versions != [1]:
                 raise RuntimeError("Unsupported DB schema version")

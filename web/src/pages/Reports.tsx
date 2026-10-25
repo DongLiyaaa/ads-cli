@@ -15,6 +15,7 @@ const productNames: Record<string, string> = {
   SP: "Sponsored Products",
   SB: "Sponsored Brands",
   SD: "Sponsored Display",
+  FF: "全流域广告活动 (Full-funnel)",
 };
 const reportOptions = Object.entries(reportNames).map(([value, label]) => ({
   value,

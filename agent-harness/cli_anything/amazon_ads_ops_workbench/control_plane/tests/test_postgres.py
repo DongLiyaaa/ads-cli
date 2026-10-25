@@ -4,6 +4,7 @@ ADS_TEST_EMPTY_DATABASE=1 python -m unittest \
  cli_anything.amazon_ads_ops_workbench.control_plane.tests.test_postgres -v
 """
 
+import json
 import os
 import secrets
 import unittest
@@ -54,6 +55,30 @@ class FakeClient:
 
     def amc_download_urls(self, *args):
         return ["https://fixture.s3.amazonaws.com/amc.csv?X-Amz-Signature=secret"]
+
+    ff_campaigns = ()
+    unified_throttle = 0
+
+    def query_campaign_ids(self, token, profile_id, ad_product):
+        self.campaign_query = (profile_id, ad_product)
+        return list(self.ff_campaigns)
+
+    def advertiser_account_id(self, token, profile_id):
+        return "amzn1.ads-account.g.fixture"
+
+    def unified_create_report(self, token, body):
+        if self.unified_throttle:
+            self.unified_throttle -= 1
+            raise RuntimeError("Create unified report failed: 429 Too Many Requests")
+        self.unified_submitted = body
+        return {"reportId": "unified-fixture", "status": "PENDING"}
+
+    def unified_get_report(self, token, report_id):
+        self.polls += 1
+        report = {"reportId": report_id, "status": "PROCESSING" if self.polls == 1 else "COMPLETED"}
+        if report["status"] == "COMPLETED":
+            report["completedReportParts"] = [{"url": "https://fixture.s3.amazonaws.com/u.csv?X-Amz-Signature=secret"}]
+        return report
 
     def create_campaign(self, *args):
         self.writes += 1
@@ -261,11 +286,14 @@ class PostgresIntegration(unittest.TestCase):
 
     def test_amc_query_submits_polls_and_stores_rows(self):
         task = self.amc_task()
-        csv = "ad_product_combo,reached_users,purchasing_users,purchases,product_sales\nSP,549634,352,395,11336.98\n"
+        csv = (
+            "ad_product_combo,reached_users,purchasing_users,purchases,product_sales\n"
+            ",80,3,4,99.5\nSP+SB,1200,40,41,1001.5\nSP,549634,352,395,11336.98\n"
+        )
         worker = Worker(self.service)
         with patch(
             "cli_anything.amazon_ads_ops_workbench.control_plane.worker.download_amc_rows",
-            side_effect=lambda urls, limit: __import__(
+            side_effect=lambda urls, limit, relay=None: __import__(
                 "cli_anything.amazon_ads_ops_workbench.core.amc", fromlist=["x"]
             ).parse_csv_rows(csv),
         ):
@@ -280,13 +308,76 @@ class PostgresIntegration(unittest.TestCase):
             self.due(task["id"])
             self.assertTrue(worker.run_one())  # SUCCEEDED
         detail = self.service.task(self.actor, task["id"])
-        self.assertEqual((detail["status"], detail["row_count"]), ("SUCCEEDED", 1))
-        rows = self.service.result_rows(self.actor, task["id"], 0, 200)
-        self.assertEqual(rows["rows"][0]["purchases"], 395)
-        self.assertEqual(rows["rows"][0]["product_sales"], 11336.98)
+        self.assertEqual((detail["status"], detail["row_count"]), ("SUCCEEDED", 3))
+        rows = self.service.result_rows(self.actor, task["id"], 0, 200)["rows"]
+        # Sorted by label; the privacy-filtered row is merged and kept last.
+        self.assertEqual([r["ad_product_combo"] for r in rows], ["SP", "SP+SB", "隐私过滤合并（1 行）"])
+        self.assertEqual(rows[0]["purchases"], 395)
+        self.assertEqual(rows[0]["product_sales"], 11336.98)
+        self.assertEqual(rows[2]["purchases"], 4)
         listed = self.service.tasks(self.actor, kind="report", operation="reports.create-amc-query")
         self.assertEqual([t["id"] for t in listed], [task["id"]])
         self.assertEqual(listed[0]["arguments"]["template"], "ad-product-combo")
+        privacy = listed[0]["privacy"]
+        self.assertEqual((privacy["rows"], privacy["filtered_rows"], privacy["merged"]), (3, 1, True))
+        self.assertEqual(privacy["shares"]["purchases"], 0.91)
+
+    def full_funnel_task(self):
+        return self.service.create_task(
+            self.actor,
+            self.account_id,
+            "reports.create-full-funnel-campaigns",
+            {"start_date": "2026-10-01", "end_date": "2026-10-07", "time_unit": "DAILY"},
+            secrets.token_hex(16),
+            "report",
+        )
+
+    def test_full_funnel_without_campaigns_finishes_empty(self):
+        task = self.full_funnel_task()
+        self.assertTrue(Worker(self.service).run_one())
+        detail = self.service.task(self.actor, task["id"])
+        self.assertEqual(
+            (detail["status"], detail["row_count"], detail["remote_status"]), ("SUCCEEDED", 0, "NO_CAMPAIGNS")
+        )
+        self.assertEqual(self.gateway.client.campaign_query[1], "FULL_FUNNEL")
+        self.assertFalse(hasattr(self.gateway.client, "unified_submitted"))
+
+    def test_full_funnel_submits_campaign_filter_polls_and_normalizes_rows(self):
+        self.gateway.client.ff_campaigns = ("111", "222")
+        self.gateway.client.unified_throttle = 1
+        task = self.full_funnel_task()
+        csv = (
+            "date.value,budgetCurrency.value,campaign.id,campaign.name,metric.impressions,metric.totalCost,metric.sales\n"
+            "2026-10-01,USD,111,FF one,1200,15.5,40.25\n"
+        )
+        worker = Worker(self.service)
+        with patch(
+            "cli_anything.amazon_ads_ops_workbench.control_plane.worker.download_csv_rows",
+            side_effect=lambda urls, limit, relay=None, label="": __import__(
+                "cli_anything.amazon_ads_ops_workbench.core.amc", fromlist=["x"]
+            ).parse_csv_rows(csv),
+        ):
+            self.assertTrue(worker.run_one())  # throttled: requeued, not failed
+            self.assertEqual(self.service.task(self.actor, task["id"])["status"], "QUEUED")
+            self.due(task["id"])
+            self.assertTrue(worker.run_one())  # submit
+            body = self.gateway.client.unified_submitted
+            report = body["reports"][0]
+            self.assertEqual(report["query"]["filter"]["on"]["values"], ["111", "222"])
+            self.assertEqual(report["query"]["fields"][0], "date.value")
+            self.assertEqual(body["accessRequestedAccounts"], [{"advertiserAccountId": "amzn1.ads-account.g.fixture"}])
+            self.due(task["id"])
+            self.assertTrue(worker.run_one())  # PROCESSING
+            self.due(task["id"])
+            self.assertTrue(worker.run_one())  # COMPLETED
+        detail = self.service.task(self.actor, task["id"])
+        self.assertEqual((detail["status"], detail["row_count"]), ("SUCCEEDED", 1))
+        self.assertNotIn("X-Amz-Signature", json.dumps(detail))
+        row = self.service.result_rows(self.actor, task["id"], 0, 200)["rows"][0]
+        self.assertEqual(
+            (row["date"], row["campaignId"], row["campaignName"], row["impressions"], row["cost"], row["sales"]),
+            ("2026-10-01", "111", "FF one", 1200, 15.5, 40.25),
+        )
 
     def test_amc_failure_reports_reason(self):
         task = self.amc_task()
@@ -349,6 +440,101 @@ class PostgresIntegration(unittest.TestCase):
                 )
             )
         self.assertEqual((detail["via"], detail["token_id"]), ("mcp", approver.token_id))
+
+    def test_token_reveal_revoke_and_delete(self):
+        created = self.service.create_token(self.actor, "fixture", ["ads:read"], [self.account_id], 1)
+        listed = {t["id"]: t for t in self.service.tokens(self.actor)}
+        self.assertTrue(listed[created["id"]]["can_reveal"])
+        self.assertEqual(self.service.reveal_token(self.actor, created["id"])["token"], created["token"])
+        with self.db.sessions() as s:
+            stored = s.get(Token, created["id"])
+            self.assertNotIn(created["token"], stored.token_ciphertext)
+        token_actor = self.service.authenticate_token(created["token"])
+        with self.assertRaises(Problem) as error:
+            self.service.reveal_token(token_actor, created["id"])
+        self.assertEqual(error.exception.status, 403)
+
+        # Tokens from before this release have no ciphertext.
+        legacy = self.service.create_token(self.actor, "legacy", ["ads:read"], [self.account_id], 1)
+        with self.db.sessions.begin() as s:
+            s.get(Token, legacy["id"]).token_ciphertext = None
+        with self.assertRaises(Problem) as error:
+            self.service.reveal_token(self.actor, legacy["id"])
+        self.assertEqual(error.exception.status, 409)
+        rotated = self.service.rotate_token(self.actor, legacy["id"])
+        self.assertNotEqual(rotated["token"], legacy["token"])
+        self.assertEqual(self.service.reveal_token(self.actor, legacy["id"])["token"], rotated["token"])
+        with self.assertRaises(Problem):
+            self.service.authenticate_token(legacy["token"])
+        self.assertEqual(self.service.authenticate_token(rotated["token"]).token_id, legacy["id"])
+        with self.assertRaises(Problem) as error:
+            self.service.rotate_token(token_actor, legacy["id"])
+        self.assertEqual(error.exception.status, 403)
+
+        self.service.revoke_token(self.actor, created["id"])
+        with self.db.sessions() as s:
+            self.assertIsNone(s.get(Token, created["id"]).token_ciphertext)
+        with self.assertRaises(Problem) as error:
+            self.service.reveal_token(self.actor, created["id"])
+        self.assertEqual(error.exception.status, 409)
+        with self.assertRaises(Problem) as error:
+            self.service.rotate_token(self.actor, created["id"])
+        self.assertEqual(error.exception.status, 409)
+
+        live = self.service.create_token(self.actor, "live", ["ads:read"], [self.account_id], 1)
+        self.service.delete_token(self.actor, live["id"])
+        self.assertNotIn(live["id"], {t["id"] for t in self.service.tokens(self.actor)})
+        with self.assertRaises(Problem):
+            self.service.authenticate_token(live["token"])
+        with self.assertRaises(Problem) as error:
+            self.service.delete_token(self.actor, live["id"])
+        self.assertEqual(error.exception.status, 404)
+
+    def test_rename_account(self):
+        renamed = self.service.rename_account(self.actor, self.account_id, "  新店铺名  ")
+        self.assertEqual(renamed["label"], "新店铺名")
+        with self.assertRaises(Problem):
+            self.service.rename_account(self.actor, self.account_id, "   ")
+        with self.assertRaises(Problem):
+            self.service.rename_account(Actor("other", "session"), self.account_id, "x")
+
+    def test_report_summary_covers_all_rows(self):
+        task = self.service.create_task(
+            self.actor,
+            self.account_id,
+            "reports.create-sp-keywords",
+            {"start_date": "2026-10-01", "end_date": "2026-10-07"},
+            secrets.token_hex(16),
+            "report",
+        )
+        rows = [
+            {"campaignName": "A" if i % 3 else "B", "clicks": i, "cost": 0.5, "note": "x" if i == 4 else None}
+            for i in range(450)
+        ]
+        rows.append({"campaignName": None, "clicks": "n/a", "cost": 1})
+        with self.db.sessions.begin() as s:
+            s.get(Task, task["id"]).status = "SUCCEEDED"
+            s.get(Task, task["id"]).row_count = len(rows)
+            for i, row in enumerate(rows):
+                s.add(ReportRow(task_id=task["id"], row_no=i, data=row))
+        result = self.service.result_summary(self.actor, task["id"], "campaignName", ["clicks", "cost"])
+        self.assertEqual(result["total"]["rows"], 451)
+        self.assertEqual(result["total"]["sums"]["clicks"], sum(range(450)))  # "n/a" ignored
+        self.assertEqual(result["total"]["sums"]["cost"], 450 * 0.5 + 1)
+        groups = {g["key"]: g for g in result["groups"]}
+        self.assertEqual(set(groups), {"A", "B", None})
+        self.assertEqual(groups["B"]["rows"], 150)
+        self.assertEqual(groups["B"]["sums"]["clicks"], sum(range(0, 450, 3)))
+        total_only = self.service.result_summary(self.actor, task["id"], None, ["clicks"])
+        self.assertEqual(total_only["groups"], [])
+        for bad in (["clicks;drop"], [], ["clicks", "clicks"]):
+            with self.assertRaises(Problem) as error:
+                self.service.result_summary(self.actor, task["id"], None, bad)
+            self.assertEqual(error.exception.status, 400)
+        with self.assertRaises(Problem):
+            self.service.result_summary(self.actor, task["id"], "x') or 1=1 --", ["clicks"])
+        with self.assertRaises(Problem):
+            self.service.result_summary(Actor("other", "session"), task["id"], None, ["clicks"])
 
     def test_http_login_token_approval_and_revocation(self):
         with self.db.sessions() as s:

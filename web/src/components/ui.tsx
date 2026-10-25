@@ -1,6 +1,14 @@
 import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { CaretLeft, CaretRight, Database, X } from "@phosphor-icons/react";
+import {
+  CaretLeft,
+  CaretRight,
+  Database,
+  GithubLogo,
+  TiktokLogo,
+  WechatLogo,
+  X,
+} from "@phosphor-icons/react";
 import { statuses } from "../lib/constants";
 
 export function Status({ value, label }: { value: string; label?: string }) {
@@ -262,5 +270,29 @@ export function ConfirmDialog({
         </button>
       </div>
     </Modal>
+  );
+}
+
+/** Author line shown at the bottom of every screen. */
+export function AuthorCredit({ className = "" }: { className?: string }) {
+  return (
+    <p className={`author-credit ${className}`.trim()}>
+      <a
+        href="https://github.com/DongLiyaaa"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <GithubLogo size={14} weight="fill" aria-hidden="true" />
+        GitHub：DongLiyaaa
+      </a>
+      <span>
+        <WechatLogo size={14} weight="fill" aria-hidden="true" />
+        微信公众号：冬离鸭冬离
+      </span>
+      <span>
+        <TiktokLogo size={14} weight="fill" aria-hidden="true" />
+        抖音号：冬离鸭冬离
+      </span>
+    </p>
   );
 }

@@ -190,3 +190,43 @@ def test_change_password_requires_session_and_csrf(client):
         json=body,
     )
     assert result.status_code == 200 and result.json() == {"changed": True}
+
+
+def test_server_management_requires_session_csrf(client):
+    origin = {"Origin": "http://127.0.0.1:16666"}
+    calls = [
+        ("get", "/api/servers", None),
+        ("post", "/api/servers", {"name": "x", "host": "h", "username": "u", "auth_type": "password", "password": "p"}),
+        ("patch", "/api/servers/s1", {"name": "y"}),
+        ("delete", "/api/servers/s1", None),
+        ("post", "/api/servers/s1/test", None),
+        ("post", "/api/servers/s1/install", None),
+        ("post", "/api/servers/s1/check", None),
+        ("post", "/api/servers/s1/uninstall", None),
+        ("put", "/api/accounts/a1/relay", {"relay_id": None}),
+    ]
+    for method, path, body in calls:
+        kwargs = {"headers": origin, **({"json": body} if body is not None else {})}
+        assert getattr(client, method)(path, **kwargs).status_code == 401, path
+    client.cookies.set("ads_session", "test-session")
+    for method, path, body in calls[1:]:
+        kwargs = {"headers": origin, **({"json": body} if body is not None else {})}
+        assert getattr(client, method)(path, **kwargs).status_code == 403, path
+    client.cookies.clear()
+
+
+def test_token_and_account_management_require_session_csrf(client):
+    origin = {"Origin": "http://127.0.0.1:16666"}
+    assert client.post("/api/tokens/t1/reveal", headers=origin).status_code == 401
+    assert client.post("/api/tokens/t1/rotate", headers=origin).status_code == 401
+    assert client.delete("/api/tokens/t1", headers=origin).status_code == 401
+    assert client.patch("/api/accounts/a1", headers=origin, json={"label": "x"}).status_code == 401
+    client.cookies.set("ads_session", "test-session")
+    assert client.post("/api/tokens/t1/reveal", headers=origin).status_code == 403
+    assert client.post("/api/tokens/t1/rotate", headers=origin).status_code == 403
+    assert client.delete("/api/tokens/t1", headers=origin).status_code == 403
+    assert client.patch("/api/accounts/a1", headers=origin, json={"label": "x"}).status_code == 403
+    assert (
+        client.delete("/api/tokens/t1", headers={"Origin": "https://evil.example"}).status_code
+        == 403
+    )

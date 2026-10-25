@@ -7,6 +7,7 @@ from typing import Any
 from urllib import error, parse, request
 
 from .env import AdsEnvironment, get_region_base_url
+from .relay import opener_for
 from .sponsored_brands import assert_sb_raw_allowed
 from .sponsored_display import assert_sd_raw_allowed
 
@@ -14,6 +15,7 @@ from .sponsored_display import assert_sd_raw_allowed
 class AmazonAdsClient:
     def __init__(self, env: AdsEnvironment):
         self.env = env
+        self.opener = opener_for(getattr(env, "relay", None))
 
     def exchange_refresh_token(self) -> str:
         from .runtime import current_runtime
@@ -1405,6 +1407,72 @@ class AmazonAdsClient:
             raise RuntimeError("Get report status failed: payload is not an object")
         return data
 
+    def _ads_api_send(
+        self, access_token: str, path: str, label: str, body: dict[str, Any], profile_id: str | None = None
+    ) -> dict[str, Any]:
+        """Unified Ads API (/adsApi/v1); a profile scope narrows queries to one marketplace."""
+        headers = {
+            **self._build_headers(access_token),
+            "Amazon-Ads-ClientId": self.env.client_id,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if profile_id:
+            headers["Amazon-Advertising-API-Scope"] = profile_id
+        req = request.Request(
+            f"{get_region_base_url(self.env.region)}{path}",
+            method="POST",
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+        )
+        data = self._send_json(req, label)
+        if not isinstance(data, dict):
+            raise RuntimeError(f"{label} failed: payload is not an object")
+        return data
+
+    def query_campaign_ids(self, access_token: str, profile_id: str, ad_product: str) -> list[str]:
+        ids: list[str] = []
+        next_token, seen = None, set()
+        while True:
+            body: dict[str, Any] = {"adProductFilter": {"include": [ad_product]}, "maxResults": 100}
+            if next_token:
+                body["nextToken"] = next_token
+            data = self._ads_api_send(access_token, "/adsApi/v1/query/campaigns", "Query campaigns", body, profile_id)
+            ids.extend(str(c["campaignId"]) for c in data.get("campaigns") or [] if c.get("campaignId"))
+            next_token = data.get("nextToken")
+            if not next_token or next_token in seen:
+                return ids
+            seen.add(next_token)
+
+    def advertiser_account_id(self, access_token: str, profile_id: str) -> str:
+        from .unified_reports import pick_advertiser_account
+
+        data = self._ads_api_send(access_token, "/adsApi/v1/query/advertiserAccounts", "Advertiser accounts", {})
+        try:
+            return pick_advertiser_account(data.get("advertiserAccounts") or [], profile_id)
+        except ValueError as exc:
+            raise RuntimeError(f"Advertiser accounts failed: {exc}") from None
+
+    def _unified_report(self, data: dict[str, Any], label: str) -> dict[str, Any]:
+        # Multi-status (207): per-report results arrive in success / error arrays.
+        success = data.get("success") or []
+        if success and isinstance(success[0].get("report"), dict):
+            return success[0]["report"]
+        raise RuntimeError(f"{label} failed: 400 {json.dumps(data.get('error') or data, ensure_ascii=False)[:1000]}")
+
+    def unified_create_report(self, access_token: str, body: dict[str, Any]) -> dict[str, Any]:
+        data = self._ads_api_send(access_token, "/adsApi/v1/create/reports", "Create unified report", body)
+        report = self._unified_report(data, "Create unified report")
+        if not report.get("reportId"):
+            raise RuntimeError("Create unified report failed: reportId missing")
+        return report
+
+    def unified_get_report(self, access_token: str, report_id: str) -> dict[str, Any]:
+        data = self._ads_api_send(
+            access_token, "/adsApi/v1/retrieve/reports", "Get unified report", {"reportIds": [report_id]}
+        )
+        return self._unified_report(data, "Get unified report")
+
     def list_ads_accounts(self, access_token: str) -> list[dict[str, Any]]:
         """Account Management API; alternateIds carry the sponsored ads entity IDs."""
         media = "application/vnd.listaccountsresource.v1+json"
@@ -1550,7 +1618,7 @@ class AmazonAdsClient:
 
     def download_report_file(self, url: str, output_path: str) -> dict[str, Any]:
         try:
-            with request.urlopen(url, timeout=60) as resp:
+            with self.opener.open(url, timeout=60) as resp:
                 raw = resp.read()
                 content_type = resp.headers.get("Content-Type", "")
         except error.HTTPError as exc:
@@ -1794,7 +1862,7 @@ class AmazonAdsClient:
 
     def _send_json(self, req: request.Request, label: str) -> Any:
         try:
-            with request.urlopen(req, timeout=30) as resp:
+            with self.opener.open(req, timeout=30) as resp:
                 raw = resp.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except error.HTTPError as exc:

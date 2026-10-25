@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, WarningCircle } from "@phosphor-icons/react";
+import { AuthorCredit } from "../components/ui";
 import { api } from "../api";
 import type { SetupState } from "../lib/types";
 import {
@@ -90,6 +91,7 @@ export function ResetPassword({
           返回登录
         </button>
       </form>
+      <AuthorCredit className="login-credit" />
     </main>
   );
 }

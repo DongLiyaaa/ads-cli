@@ -393,6 +393,8 @@ For SD, recommendations can cover campaigns, ad groups, product ads, product/aud
   - Create a Sponsored Display product ad report task.
 - `reports create-sd-targeting --start-date 2026-07-01 --end-date 2026-07-07 --time-unit DAILY`
   - Create a Sponsored Display targeting report task.
+- `reports create-full-funnel-campaigns --start-date 2026-07-01 --end-date 2026-07-07 --time-unit DAILY`
+  - Create a full-funnel campaign report (console: 全流域广告活动) through the unified Reporting API v1, filtered to this marketplace's full-funnel campaign IDs. Returns `campaignCount` and the unified report; when the marketplace has no full-funnel campaigns no report is created. `--time-unit` is DAILY or SUMMARY. Status and download run in the control plane worker, not `reports status`.
 - `reports parse-sd-report --input-file <PATH>`
   - Parse a downloaded SD report into normalized JSON rows.
 

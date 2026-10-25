@@ -239,6 +239,12 @@ CAPABILITIES: list[dict[str, Any]] = [
     _report("reports.create-sd-ad-groups", "SD", "reports create-sd-ad-groups --start-date YYYY-MM-DD --end-date YYYY-MM-DD"),
     _report("reports.create-sd-product-ads", "SD", "reports create-sd-product-ads --start-date YYYY-MM-DD --end-date YYYY-MM-DD"),
     _report("reports.create-sd-targeting", "SD", "reports create-sd-targeting --start-date YYYY-MM-DD --end-date YYYY-MM-DD"),
+    _report(
+        "reports.create-full-funnel-campaigns",
+        "FF",
+        "reports create-full-funnel-campaigns --start-date YYYY-MM-DD --end-date YYYY-MM-DD",
+        "全流域广告活动；统一报表 API v1，按本站点的全流域活动 ID 筛选，没有活动时返回空结果。",
+    ),
     _report("reports.status", "ALL", "reports status --report-id ID"),
     _report("reports.download", "ALL", "reports download --report-id ID"),
     _report("reports.parse-search-terms", "SP", "reports parse-search-terms --input-file PATH", "Local parse; no live credentials required."),
@@ -251,8 +257,8 @@ CAPABILITIES: list[dict[str, Any]] = [
 
 def normalize_ad_product(ad_product: str | None) -> str:
     value = (ad_product or "ALL").strip().upper()
-    if value not in {"ALL", "SP", "SB", "SBV", "SD"}:
-        raise ValueError("ad_product must be one of ALL, SP, SB, SBV, or SD.")
+    if value not in {"ALL", "SP", "SB", "SBV", "SD", "FF"}:
+        raise ValueError("ad_product must be one of ALL, SP, SB, SBV, SD, or FF.")
     return value
 
 

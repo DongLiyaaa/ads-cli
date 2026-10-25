@@ -9,6 +9,7 @@ function attribution(key: string, label: string, format: Format): [string, Colum
 
 const COLUMNS: [string, Column][] = [
   ["date", { label: "日期" }],
+  ["dateRange", { label: "日期范围" }],
   ["campaignName", { label: "广告活动" }],
   ["campaignId", { label: "活动 ID" }],
   ["campaignStatus", { label: "活动状态" }],
@@ -39,27 +40,47 @@ const COLUMNS: [string, Column][] = [
   ["targetId", { label: "投放 ID" }],
   ["searchTerm", { label: "搜索词" }],
   ["campaignBudgetCurrencyCode", { label: "币种" }],
+  ["event_date", { label: "日期" }],
   ["ad_product_type", { label: "广告类型" }],
   ["ad_product_combo", { label: "广告类型组合" }],
   ["campaign", { label: "广告活动" }],
+  ["campaign_id", { label: "活动 ID" }],
+  ["ad_group", { label: "广告组" }],
+  ["target_expression", { label: "投放表达式" }],
+  ["match_type", { label: "匹配类型" }],
   ["customer_search_term", { label: "搜索词" }],
+  ["tracked_asin", { label: "购买的 ASIN" }],
   ["frequency_bucket", { label: "曝光频次" }],
   ["time_to_purchase", { label: "购买时长" }],
   ["hour_of_day", { label: "小时" }],
   ["reached_users", { label: "触达人数", format: "int" }],
   ["purchasing_users", { label: "购买人数", format: "int" }],
   ["impressions", { label: "曝光", format: "int" }],
+  ["viewable_impressions", { label: "可见曝光", format: "int" }],
   ["clicks", { label: "点击", format: "int" }],
   ["clickThroughRate", { label: "点击率", format: "share" }],
   ["costPerClick", { label: "单次点击花费", format: "money" }],
   ["cost", { label: "花费", format: "money" }],
   ["purchases", { label: "订单", format: "int" }],
   ["sales", { label: "销售额", format: "money" }],
+  ["unitsSold", { label: "销量", format: "int" }],
+  ["addToCart", { label: "加购", format: "int" }],
+  ["detailPageViews", { label: "详情页浏览", format: "int" }],
+  ["newToBrandPurchases", { label: "新客订单", format: "int" }],
+  ["newToBrandSales", { label: "新客销售额", format: "money" }],
   ["spend", { label: "花费", format: "money" }],
   ["product_sales", { label: "销售额", format: "money" }],
   ["units_sold", { label: "销量", format: "int" }],
   ["ntb_purchases", { label: "新客订单", format: "int" }],
   ["ntb_product_sales", { label: "新客销售额", format: "money" }],
+  ["add_to_cart", { label: "加购", format: "int" }],
+  ["detail_page_views", { label: "详情页浏览", format: "int" }],
+  ["five_sec_views", { label: "5 秒观看", format: "int" }],
+  ["video_first_quartile_views", { label: "视频 25% 观看", format: "int" }],
+  ["video_midpoint_views", { label: "视频 50% 观看", format: "int" }],
+  ["video_third_quartile_views", { label: "视频 75% 观看", format: "int" }],
+  ["video_complete_views", { label: "视频完整观看", format: "int" }],
+  ["video_unmutes", { label: "视频取消静音", format: "int" }],
   ...attribution("purchases", "订单", "int"),
   ...attribution("sales", "销售额", "money"),
   ...attribution("unitsSoldClicks", "销量", "int"),
@@ -114,4 +135,67 @@ export function formatCell(key: string, value: unknown) {
     return share.format(value);
   }
   return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+/** Money/count fields that are rates or settings, so summing them is meaningless. */
+const NON_ADDITIVE = new Set([
+  "campaignBudgetAmount",
+  "keywordBid",
+  "costPerClick",
+  "searchTermImpressionRank",
+]);
+
+export function isAdditiveColumn(key: string) {
+  const format = known.get(key)?.format;
+  return (format === "int" || format === "money") && !NON_ADDITIVE.has(key);
+}
+
+export type Derived = {
+  key: string;
+  label: string;
+  format: "percent" | "money" | "ratio";
+  calc: (sums: Record<string, number | null>) => number | null;
+};
+
+function ratio(a: number | null | undefined, b: number | null | undefined) {
+  return a == null || !b ? null : a / b;
+}
+
+function windowLabel(key: string) {
+  const days = key.match(/(\d+)d$/)?.[1];
+  return days ? `（${days} 天）` : "";
+}
+
+/** Ratios recomputed from summed totals (averaging row-level ratios would be wrong). */
+export function derivedMetrics(metrics: string[]): Derived[] {
+  const has = (k: string) => metrics.includes(k);
+  const cost = ["cost", "spend"].find(has);
+  const sales = ["sales7d", "sales", "sales14d", "sales30d", "product_sales", "sales1d"].find(has);
+  const orders = ["purchases7d", "purchases", "purchases14d", "purchases30d", "purchases1d"].find(has);
+  const out: Derived[] = [];
+  if (has("clicks") && has("impressions"))
+    out.push({ key: "ctr", label: "点击率", format: "percent", calc: (s) => ratio(s.clicks, s.impressions) });
+  if (cost && has("clicks"))
+    out.push({ key: "cpc", label: "单次点击花费", format: "money", calc: (s) => ratio(s[cost], s.clicks) });
+  if (orders && has("clicks"))
+    out.push({ key: "cvr", label: `转化率${windowLabel(orders)}`, format: "percent", calc: (s) => ratio(s[orders], s.clicks) });
+  if (cost && sales) {
+    out.push({ key: "acos", label: `ACOS${windowLabel(sales)}`, format: "percent", calc: (s) => ratio(s[cost], s[sales]) });
+    out.push({ key: "roas", label: `ROAS${windowLabel(sales)}`, format: "ratio", calc: (s) => ratio(s[sales], s[cost]) });
+  }
+  if (has("purchasing_users") && has("reached_users"))
+    out.push({ key: "buy_rate", label: "购买率", format: "percent", calc: (s) => ratio(s.purchasing_users, s.reached_users) });
+  return out;
+}
+
+export function formatDerived(format: Derived["format"], value: number | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  if (format === "percent") return `${(value * 100).toFixed(2)}%`;
+  if (format === "money") return money.format(value);
+  return value.toFixed(2);
+}
+
+/** Dimensions with a natural order sort by value instead of by size. */
+export function sortsByKey(key: string) {
+  return /(^date$|date$|hour|bucket|time_to_purchase)/.test(key);
 }

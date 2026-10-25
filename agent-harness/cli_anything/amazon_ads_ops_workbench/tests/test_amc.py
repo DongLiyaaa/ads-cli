@@ -118,5 +118,71 @@ class CsvTests(unittest.TestCase):
         self.assertEqual(amc.parse_csv_rows("a,b\n"), [])
 
 
+
+class FinalizeRowsTests(unittest.TestCase):
+    COLUMNS = [
+        {"name": "frequency_bucket", "dataType": "STRING", "columnType": "DIMENSION"},
+        # COUNT(DISTINCT ...) comes back as a numeric DIMENSION.
+        {"name": "reached_users", "dataType": "LONG", "columnType": "DIMENSION"},
+        {"name": "product_sales", "dataType": {"type": "DECIMAL", "precision": 38}, "columnType": "METRIC"},
+    ]
+
+    def rows(self):
+        return [
+            {"frequency_bucket": "21+", "reached_users": 5, "product_sales": 1.5},
+            {"frequency_bucket": None, "reached_users": 3, "product_sales": 0.25},
+            {"frequency_bucket": "02-03", "reached_users": 9, "product_sales": 2.0},
+            {"frequency_bucket": "11-20", "reached_users": 4, "product_sales": None},
+            {"frequency_bucket": None, "reached_users": 2, "product_sales": 1.0},
+            {"frequency_bucket": "01", "reached_users": 7, "product_sales": 3.0},
+        ]
+
+    def test_template_rows_sort_naturally_and_merge_hidden_rows(self):
+        rows, privacy = amc.finalize_rows(self.rows(), self.COLUMNS, "frequency-vs-conversion")
+        self.assertEqual(
+            [r["frequency_bucket"] for r in rows],
+            ["01", "02-03", "11-20", "21+", "隐私过滤合并（2 行）"],
+        )
+        self.assertEqual(rows[-1], {"frequency_bucket": "隐私过滤合并（2 行）", "reached_users": 5, "product_sales": 1.25})
+        campaigns = [
+            {"campaign": "B", "campaign_id": "2", "clicks": 1},
+            {"campaign": None, "campaign_id": None, "clicks": 4},
+            {"campaign": "A10", "campaign_id": "1", "clicks": 2},
+            {"campaign": "A9", "campaign_id": "3", "clicks": 3},
+        ]
+        rows, _ = amc.finalize_rows(campaigns, None, "full-conversions-asin")
+        self.assertEqual([r["campaign"] for r in rows], ["A9", "A10", "B", "隐私过滤合并（1 行）"])
+        self.assertIsNone(rows[-1]["campaign_id"])
+        self.assertEqual((privacy["rows"], privacy["filtered_rows"], privacy["merged"]), (6, 2, True))
+        self.assertEqual(privacy["shares"], {"reached_users": 16.67, "product_sales": 16.13})
+
+    def test_custom_sql_keeps_hidden_rows(self):
+        rows, privacy = amc.finalize_rows(self.rows(), self.COLUMNS)
+        self.assertEqual([r["frequency_bucket"] for r in rows][-2:], [None, None])
+        self.assertEqual(len(rows), 6)
+        self.assertFalse(privacy["merged"])
+
+    def test_template_order_and_numeric_sort_columns(self):
+        labels = ["7d+", "1-3d", "0-1h", "6-24h", "1-6h", "3-7d"]
+        rows, _ = amc.finalize_rows(
+            [{"ad_product_type": "sp", "time_to_purchase": x, "purchases": 1} for x in labels],
+            None,
+            "time-to-conversion",
+        )
+        self.assertEqual([r["time_to_purchase"] for r in rows], ["0-1h", "1-6h", "6-24h", "1-3d", "3-7d", "7d+"])
+        hours = [{"hour_of_day": h, "ad_product_type": "sp", "clicks": 1} for h in (10, 2, 0)]
+        rows, privacy = amc.finalize_rows(hours, None, "hour-of-day")
+        self.assertEqual([r["hour_of_day"] for r in rows], [0, 2, 10])
+        self.assertNotIn("hour_of_day", privacy["shares"])
+
+    def test_empty_result(self):
+        self.assertEqual(amc.finalize_rows([], None, "hour-of-day")[0], [])
+
+    def test_full_templates_are_marked(self):
+        full = [t["id"] for t in amc.public_templates() if t["category"] == "full"]
+        self.assertEqual(len(full), 4)
+        self.assertTrue(all("sort" not in t for t in amc.public_templates()))
+
+
 if __name__ == "__main__":
     unittest.main()

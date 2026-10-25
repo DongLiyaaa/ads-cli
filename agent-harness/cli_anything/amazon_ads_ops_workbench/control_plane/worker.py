@@ -8,12 +8,16 @@ import re
 import time
 from urllib import request, parse
 from sqlalchemy import select, delete, insert
+from sqlalchemy.exc import SQLAlchemyError
 from .models import Task, Account, Token, ReportRow, now, uid
 from .security import Problem, bound_hash, redact
 from .service import audit
 from .contracts import invoke_contract
-from ..core.amc import FINAL_FAILURE_STATUSES as AMC_FAILED, parse_csv_rows
+from ..core.amc import FINAL_FAILURE_STATUSES as AMC_FAILED, finalize_rows, parse_csv_rows
 from ..core.dispatch import execute_approved_operation
+from ..core.relay import opener_for
+from ..core.unified_reports import build_report_body as build_unified_body
+from ..core.unified_reports import normalize_rows as normalize_unified_rows
 
 
 def mutation_outcome(result):
@@ -86,9 +90,9 @@ class SafeRedirect(request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def download_rows(url, max_bytes):
+def download_rows(url, max_bytes, relay=None):
     validate_download_url(url)
-    with request.build_opener(SafeRedirect()).open(url, timeout=60) as response:
+    with opener_for(relay, SafeRedirect()).open(url, timeout=60) as response:
         data = response.read(max_bytes + 1)
     if len(data) > max_bytes:
         raise ValueError("Report exceeds configured compressed-size limit")
@@ -105,26 +109,35 @@ def download_rows(url, max_bytes):
     return rows
 
 
-def download_amc_rows(urls, max_bytes):
-    """AMC results are one or more CSV files behind pre-signed S3 URLs."""
+def download_csv_rows(urls, max_bytes, relay=None, label="Report"):
+    """AMC and unified reports arrive as one or more CSV files behind pre-signed S3 URLs."""
     if not urls:
-        raise ValueError("AMC execution succeeded but returned no download URL")
+        raise ValueError(f"{label} succeeded but returned no download URL")
     rows = []
     for url in urls:
         validate_download_url(url)
-        with request.build_opener(SafeRedirect()).open(url, timeout=60) as response:
+        with opener_for(relay, SafeRedirect()).open(url, timeout=60) as response:
             data = response.read(max_bytes + 1)
         if len(data) > max_bytes:
-            raise ValueError("AMC result exceeds configured size limit")
+            raise ValueError(f"{label} exceeds configured size limit")
         if data[:2] == b"\x1f\x8b":
             with gzip.GzipFile(fileobj=io.BytesIO(data)) as stream:
                 data = stream.read(max_bytes + 1)
             if len(data) > max_bytes:
-                raise ValueError("AMC result exceeds configured size limit")
+                raise ValueError(f"{label} exceeds configured size limit")
         rows.extend(parse_csv_rows(data.decode("utf-8-sig")))
         if len(rows) > 250000:
-            raise ValueError("AMC result exceeds 250000-row limit; narrow the query")
+            raise ValueError(f"{label} exceeds 250000-row limit; narrow the query")
     return rows
+
+
+def download_amc_rows(urls, max_bytes, relay=None):
+    return download_csv_rows(urls, max_bytes, relay, "AMC result")
+
+
+def unified_summary(report):
+    # completedReportParts hold pre-signed download URLs; never persist them.
+    return {k: v for k, v in report.items() if k != "completedReportParts"}
 
 
 def amc_error(result, status):
@@ -331,12 +344,68 @@ class Worker:
                         result = {"instanceId": instance_id, **result}
                         if status == "SUCCEEDED":
                             urls = client.amc_download_urls(access_token, entity, instance_id, task.remote_id)
-                            rows = download_amc_rows(urls, self.service.settings.report_max_bytes)
+                            rows = download_amc_rows(urls, self.service.settings.report_max_bytes, env.relay)
+                            rows, result["privacy"] = finalize_rows(
+                                rows, result.get("outputColumns"), (task.arguments or {}).get("template")
+                            )
                             self.finish(task, "SUCCEEDED", result=result, remote_status=status, rows=rows)
                         elif status in AMC_FAILED:
                             self.finish(task, "FAILED", result=result, remote_status=status, error=amc_error(result, status))
                         else:
                             self.finish(task, "WAITING", result=result, remote_status=status)
+                elif task.payload.get("unified") and not task.remote_id:
+                    plan = task.payload
+                    campaign_ids = client.query_campaign_ids(
+                        access_token, env.profile_id, plan["adProduct"]
+                    )
+                    if not campaign_ids:
+                        # Nothing to report in this marketplace; an empty result, not an error.
+                        self.finish(
+                            task,
+                            "SUCCEEDED",
+                            result={"adProduct": plan["adProduct"], "campaignCount": 0},
+                            remote_status="NO_CAMPAIGNS",
+                            rows=[],
+                        )
+                    else:
+                        account_id = client.advertiser_account_id(access_token, env.profile_id)
+                        self.set_stage(task.id, "SUBMITTING")
+                        sent = True
+                        report = client.unified_create_report(
+                            access_token, build_unified_body(plan, account_id, campaign_ids)
+                        )
+                        self.finish(
+                            task,
+                            "WAITING",
+                            result={"campaignCount": len(campaign_ids), **unified_summary(report)},
+                            remote_id=report["reportId"],
+                            remote_status=report.get("status", "PENDING"),
+                        )
+                elif task.payload.get("unified"):
+                    report = client.unified_get_report(access_token, task.remote_id)
+                    status = report.get("status", "UNKNOWN")
+                    result = {**(task.result or {}), **unified_summary(report)}
+                    if status == "COMPLETED":
+                        urls = [
+                            p.get("url") or p.get("location")
+                            for p in report.get("completedReportParts") or []
+                        ]
+                        rows = normalize_unified_rows(
+                            download_csv_rows(
+                                urls, self.service.settings.report_max_bytes, env.relay, "Unified report"
+                            )
+                        )
+                        self.finish(task, "SUCCEEDED", result=result, remote_status=status, rows=rows)
+                    elif status in {"FAILED", "CANCELLED"}:
+                        self.finish(
+                            task,
+                            "FAILED",
+                            result=result,
+                            remote_status=status,
+                            error=report.get("failureReason") or "Amazon report failed",
+                        )
+                    else:
+                        self.finish(task, "WAITING", result=result, remote_status=status)
                 elif not task.remote_id:
                     self.set_stage(task.id, "SUBMITTING")
                     sent = True
@@ -378,7 +447,7 @@ class Worker:
                     status = result.get("status", "UNKNOWN")
                     if status == "COMPLETED":
                         rows = download_rows(
-                            result["url"], self.service.settings.report_max_bytes
+                            result["url"], self.service.settings.report_max_bytes, env.relay
                         )
                         self.finish(
                             task,
@@ -401,6 +470,9 @@ class Worker:
                         )
         except Exception as exc:
             message = str(redact(str(exc)))
+            # A throttled report submission was not accepted, so it is safe to retry.
+            if sent and task.kind == "report" and re.search(r"failed: 429\b", message):
+                sent = False
             if sent:
                 rejected = bool(re.search(r"failed: 4\d\d\b", message))
                 self.finish(task, "FAILED" if rejected else "UNKNOWN", error=message)
@@ -414,7 +486,17 @@ class Worker:
                 self.finish(task, "FAILED", error=message)
         return True
 
+    def step(self):
+        """One loop iteration; returns how long to sleep before the next one."""
+        try:
+            return 0 if self.run_one() else 2
+        except SQLAlchemyError:
+            # PostgreSQL restarting or in crash recovery: wait instead of exiting.
+            # Any lease taken before the outage is reclaimed by recover_expired().
+            return 5
+
     def run(self):
         while True:
-            if not self.run_one():
-                time.sleep(2)
+            delay = self.step()
+            if delay:
+                time.sleep(delay)

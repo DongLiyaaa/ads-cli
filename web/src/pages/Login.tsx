@@ -7,6 +7,7 @@ import {
   PlugsConnected,
   ShieldCheck,
 } from "@phosphor-icons/react";
+import { AuthorCredit } from "../components/ui";
 import { api, setCsrf } from "../api";
 
 /** Brand column shared by the login and first-run setup screens. */
@@ -128,6 +129,7 @@ export function Login({
         </button>
         <small>管理账户与 MCP Token 独立；Token 默认只能提交变更计划。</small>
       </form>
+      <AuthorCredit className="login-credit" />
     </main>
   );
 }

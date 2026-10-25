@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Any
 
 REGION_ENDPOINTS = {
     "NA": "https://advertising-api.amazon.com",
@@ -18,6 +19,8 @@ class AdsEnvironment:
     profile_id: str
     region: str
     marketplace: str
+    # RelayEndpoint when Amazon calls must leave from a remote server; None = direct.
+    relay: Any = None
 
 
 def normalize_region(region_value: str | None) -> str:

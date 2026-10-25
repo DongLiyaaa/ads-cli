@@ -49,7 +49,7 @@ def test_catalog_does_not_expose_local_files_or_approval_execution():
         & {"input_file", "output_dir", "marketplace", "confirm_submit", "dry_run"}
         for r in catalog
     )
-    assert sum(r["kind"] == "report" for r in catalog) == 20
+    assert sum(r["kind"] == "report" for r in catalog) == 21
 
 
 def test_plan_never_calls_upstream_or_writes_local_approval():
@@ -78,7 +78,8 @@ def test_plan_never_calls_upstream_or_writes_local_approval():
     [
         r["operation"]
         for r in public_catalog()
-        if r["kind"] == "report" and r["operation"] != "reports.create-amc-query"
+        if r["kind"] == "report"
+        and r["operation"] not in {"reports.create-amc-query", "reports.create-full-funnel-campaigns"}
     ],
 )
 def test_all_report_builders_prepare_without_network(operation):
@@ -320,6 +321,52 @@ def test_token_without_approve_scope_cannot_confirm():
     assert error.value.status == 403
 
 
+def test_full_funnel_plans_without_network():
+    with patch(
+        "cli_anything.amazon_ads_ops_workbench.core.client.AmazonAdsClient.exchange_refresh_token",
+        side_effect=AssertionError("network"),
+    ):
+        body = invoke_contract(
+            "reports.create-full-funnel-campaigns",
+            {"start_date": "2026-10-01", "end_date": "2026-10-07", "time_unit": "DAILY"},
+            ENV,
+            "report_plan",
+        )
+    assert body["unified"] is True and body["adProduct"] == "FULL_FUNNEL"
+    assert (body["startDate"], body["endDate"]) == ("2026-10-01", "2026-10-07")
+    assert body["fields"][:3] == ["date.value", "budgetCurrency.value", "campaign.id"]
+    summary = invoke_contract(
+        "reports.create-full-funnel-campaigns",
+        {"start_date": "2026-10-01", "end_date": "2026-10-07", "time_unit": "SUMMARY"},
+        ENV,
+        "report_plan",
+    )
+    assert summary["fields"][0] == "dateRange.value"
+    with pytest.raises(Problem):
+        invoke_contract(
+            "reports.create-full-funnel-campaigns",
+            {"start_date": "2026-10-01", "end_date": "2026-10-07", "time_unit": "HOURLY"},
+            ENV,
+            "report_plan",
+        )
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        {"campaign.id": "1", "metric.totalCost": "2", "budgetCurrency.value": "USD", "date.value": "d"},
+        {"Campaign ID": "1", "Total Cost": "2", "Budget Currency": "USD", "Date": "d"},
+        {"campaignId": "1", "totalCost": "2", "campaignBudgetCurrencyCode": "USD", "date": "d"},
+    ],
+)
+def test_unified_rows_normalize_any_header_spelling(header):
+    from cli_anything.amazon_ads_ops_workbench.core.unified_reports import normalize_rows
+
+    assert normalize_rows([{**header, "Extra": "x"}]) == [
+        {"campaignId": "1", "cost": "2", "campaignBudgetCurrencyCode": "USD", "date": "d", "Extra": "x"}
+    ]
+
+
 def test_amc_query_plans_without_network():
     with patch(
         "cli_anything.amazon_ads_ops_workbench.core.client.AmazonAdsClient.exchange_refresh_token",
@@ -358,3 +405,20 @@ def test_amc_query_allows_windows_beyond_31_days():
         "reports.create-amc-query",
         {"template": "frequency-vs-conversion", "start_date": "2026-01-01", "end_date": "2026-09-30"},
     )
+
+
+def test_worker_waits_out_database_outage():
+    from sqlalchemy.exc import OperationalError
+    from cli_anything.amazon_ads_ops_workbench.control_plane.worker import Worker
+
+    worker = Worker.__new__(Worker)
+    calls = iter([OperationalError("SELECT 1", {}, Exception("in recovery mode")), True, False])
+
+    def run_one():
+        value = next(calls)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    worker.run_one = run_one
+    assert [worker.step(), worker.step(), worker.step()] == [5, 0, 2]

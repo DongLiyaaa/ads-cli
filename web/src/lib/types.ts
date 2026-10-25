@@ -7,6 +7,34 @@ export type Account = {
   verified_at: string | null;
   currency?: string;
   timezone?: string;
+  relay_id?: string | null;
+};
+export type ServerCheck = {
+  key: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+  required: boolean;
+};
+export type RelayServer = {
+  id: string;
+  name: string;
+  host: string;
+  ssh_port: number;
+  username: string;
+  auth_type: "key" | "password";
+  relay_port: number;
+  status: string;
+  checks: ServerCheck[];
+  message: string | null;
+  host_fingerprint: string | null;
+  installed: boolean;
+  relay_version: string | null;
+  checked_at: string | null;
+  installed_at: string | null;
+  created_at: string;
+  accounts: { id: string; label: string }[];
+  plan?: string[];
 };
 export type Task = {
   id: string;
@@ -25,6 +53,14 @@ export type Task = {
   arguments?: any;
   result?: any;
   result_truncated?: boolean;
+  /** AMC only: rows whose labels Amazon hid for privacy, and their share of each metric. */
+  privacy?: AmcPrivacy;
+};
+export type AmcPrivacy = {
+  rows: number;
+  filtered_rows: number;
+  merged: boolean;
+  shares: Record<string, number>;
 };
 export type Capability = {
   operation: string;
@@ -44,8 +80,10 @@ export type MCPToken = {
   prefix: string;
   scopes: string[];
   account_ids: string[];
+  created_at: string;
   expires_at: string;
   revoked: boolean;
+  can_reveal: boolean;
   last_used_at: string | null;
 };
 export type LogEntry = {
@@ -89,6 +127,8 @@ export type AmcTemplate = {
   name: string;
   description: string;
   sources: string[];
+  /** "full" templates export complete data; "analysis" ones answer one question. */
+  category: "analysis" | "full";
   sql: string;
   sqlText: string;
 };
@@ -104,4 +144,11 @@ export type AmcOverview = {
   };
   dataSources?: AmcSource[];
   templates: AmcTemplate[];
+};
+export type SummaryBlock = { rows: number; sums: Record<string, number | null> };
+export type SummaryResult = {
+  group_by: string | null;
+  total: SummaryBlock;
+  groups: (SummaryBlock & { key: string | null })[];
+  truncated: boolean;
 };
